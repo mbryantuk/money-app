@@ -10,18 +10,47 @@ const PORT = 4001;
 app.use(cors());
 app.use(bodyParser.json());
 
+// --- INIT TABLES ---
+db.serialize(() => {
+    // Sandbox
+    db.run(`CREATE TABLE IF NOT EXISTS sandbox_expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        amount REAL,
+        category TEXT,
+        who TEXT,
+        paid INTEGER DEFAULT 0
+    )`);
+    
+    // Sandbox Profiles
+    db.run(`CREATE TABLE IF NOT EXISTS sandbox_profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        salary REAL,
+        items TEXT
+    )`);
+
+    // Christmas List (NEW)
+    db.run(`CREATE TABLE IF NOT EXISTS christmas_list (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient TEXT,
+        item TEXT,
+        amount REAL,
+        bought INTEGER DEFAULT 0
+    )`);
+});
+
 // --- 1. DATA ENDPOINTS ---
 
 app.get('/api/data', (req, res) => {
     const month = req.query.month; 
     const response = {};
 
-    // We select 'amount' from DB but send it as 'balance' to Frontend
     db.get("SELECT amount as balance, salary FROM monthly_balances WHERE month = ?", [month], (err, row) => {
         if (!row) {
             db.get("SELECT value FROM settings WHERE key = 'default_salary'", (err, setting) => {
                 const def = setting ? parseFloat(setting.value) : 0;
-                response.balance = 0; // Start fresh month with 0 balance (or default if you prefer)
+                response.balance = 0; 
                 response.salary = def; 
                 fetchRest(response);
             });
@@ -47,7 +76,6 @@ app.get('/api/data', (req, res) => {
 
 app.post('/api/balance', (req, res) => {
     const { month, amount } = req.body;
-    // Map Frontend 'balance' -> Database 'amount'
     db.run(`INSERT INTO monthly_balances (month, amount) VALUES (?, ?) 
             ON CONFLICT(month) DO UPDATE SET amount=excluded.amount`, 
             [month, amount], () => res.json({ success: true }));
@@ -113,7 +141,6 @@ app.post('/api/month/init', (req, res) => {
     
     db.get("SELECT value FROM settings WHERE key = 'default_salary'", (err, setting) => {
         const val = setting ? parseFloat(setting.value) : 0;
-        // Init with amount=0 (Current Balance) and salary=Default
         db.run("INSERT OR IGNORE INTO monthly_balances (month, amount, salary) VALUES (?, ?, ?)", [month, 0, val]);
     });
 
@@ -135,18 +162,15 @@ app.delete('/api/month', (req, res) => {
     });
     res.json({ success: true });
 });
-// GLOBAL RENAME (Updates Settings list + All History)
+
 app.post('/api/settings/rename', (req, res) => {
-    const { type, oldName, newName } = req.body; // type = 'people' or 'categories'
-    
+    const { type, oldName, newName } = req.body; 
     if (!oldName || !newName) return res.status(400).json({ error: "Names required" });
 
     db.serialize(() => {
-        // 1. Update the Settings List (JSON Array)
         db.get("SELECT value FROM settings WHERE key = ?", [type], (err, row) => {
             if (row) {
                 let list = JSON.parse(row.value);
-                // Replace the string in the array
                 const idx = list.indexOf(oldName);
                 if (idx !== -1) {
                     list[idx] = newName;
@@ -154,88 +178,24 @@ app.post('/api/settings/rename', (req, res) => {
                 }
             }
         });
-
-        // 2. Update Expenses Table (Historical Data)
         const col = type === 'people' ? 'who' : 'category';
-        // USE SAFE PARAMETERIZED QUERY
         const sql1 = `UPDATE expenses SET ${col} = ? WHERE ${col} = ?`;
         db.run(sql1, [newName, oldName]);
-
-        // 3. Update Templates (Master List)
         const sql2 = `UPDATE expense_templates SET ${col} = ? WHERE ${col} = ?`;
         db.run(sql2, [newName, oldName]);
     });
-
     res.json({ success: true });
 });
-// --- 6. SAVINGS ACCOUNTS & POTS ---
 
-// Get All Accounts with their Pots attached
-app.get('/api/savings/structure', (req, res) => {
-    const query = `
-        SELECT 
-            a.id as account_id, a.name as account_name,
-            p.id as pot_id, p.name as pot_name, p.amount as pot_amount
-        FROM savings_accounts a
-        LEFT JOIN savings_pots p ON a.id = p.account_id
-    `;
-
-    db.all(query, (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        // Group flat SQL rows into nested JSON: [{ id, name, pots: [] }]
-        const accountsMap = new Map();
-        
-        rows.forEach(row => {
-            if (!accountsMap.has(row.account_id)) {
-                accountsMap.set(row.account_id, {
-                    id: row.account_id,
-                    name: row.account_name,
-                    total: 0,
-                    pots: []
-                });
-            }
-            if (row.pot_id) { // If account has pots
-                const acc = accountsMap.get(row.account_id);
-                acc.pots.push({ id: row.pot_id, name: row.pot_name, amount: row.pot_amount });
-                acc.total += row.pot_amount;
-            }
-        });
-
-        res.json(Array.from(accountsMap.values()));
-    });
-});
-
-// Create Account
-app.post('/api/savings/accounts', (req, res) => {
-    db.run("INSERT INTO savings_accounts (name) VALUES (?)", [req.body.name], function() {
-        res.json({ id: this.lastID });
-    });
-});
-
-// Delete Account (and cascade delete pots)
-app.delete('/api/savings/accounts/:id', (req, res) => {
-    db.serialize(() => {
-        db.run("DELETE FROM savings_pots WHERE account_id = ?", [req.params.id]);
-        db.run("DELETE FROM savings_accounts WHERE id = ?", [req.params.id]);
-    });
-    res.json({ success: true });
-});
-// ... existing settings endpoints ...
-
-// --- MORTGAGE ENDPOINTS ---
+// --- 6. MORTGAGE ENDPOINTS ---
 
 app.get('/api/mortgage', (req, res) => {
     db.get("SELECT value FROM settings WHERE key = 'mortgage_data'", (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
-        // Return saved data or a default structure if nothing exists
         const defaultData = {
-            soldPrice: 460000,
-            h2b: { balance: 92000, percentage: 20 },
-            mortgages: [
-                { id: 1, name: 'Main Mortgage', balance: 151455.79, rate: 3.45, term: 20 },
-                { id: 2, name: 'Extra Borrowing', balance: 80139.80, rate: 4.15, term: 15 }
-            ]
+            soldPrice: 0,
+            h2b: { balance: 0, percentage: 0 },
+            mortgages: []
         };
         res.json(row ? JSON.parse(row.value) : defaultData);
     });
@@ -249,39 +209,15 @@ app.post('/api/mortgage', (req, res) => {
     });
 });
 
-// ... rest of your code ...
-// Add Pot
-app.post('/api/savings/pots', (req, res) => {
-    const { accountId, name, amount } = req.body;
-    db.run("INSERT INTO savings_pots (account_id, name, amount) VALUES (?, ?, ?)", [accountId, name, amount || 0], function() {
-        res.json({ id: this.lastID });
-    });
-});
+// --- 7. DASHBOARD ENDPOINT ---
 
-// Update Pot (Name/Amount)
-app.put('/api/savings/pots/:id', (req, res) => {
-    const { name, amount } = req.body;
-    db.run("UPDATE savings_pots SET name = ?, amount = ? WHERE id = ?", [name, amount, req.params.id], () => res.json({ success: true }));
-});
-
-// Delete Pot
-app.delete('/api/savings/pots/:id', (req, res) => {
-    db.run("DELETE FROM savings_pots WHERE id = ?", [req.params.id], () => res.json({ success: true }));
-});
-
-// --- SERVE ---
-app.use(express.static(path.join(__dirname, '../client/dist')));
-app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, '../client/dist', 'index.html')));
-
-// --- DASHBOARD ENDPOINT ---
 app.get('/api/dashboard', (req, res) => {
     const startYear = parseInt(req.query.year);
     if (!startYear) return res.status(400).json({ error: "Year required" });
 
-    // 1. Generate list of months (e.g., "2025-04", "2025-05"...)
     const months = [];
     for (let i = 0; i < 12; i++) {
-        const d = new Date(startYear, 3 + i, 1); // 3 = April
+        const d = new Date(startYear, 3 + i, 1); 
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         months.push(`${y}-${m}`);
@@ -295,22 +231,15 @@ app.get('/api/dashboard', (req, res) => {
         monthlyTrend: []
     };
 
-    // 2. Fetch Data Sequentially (Nested to guarantee order)
-    
-    // Step A: Get Total Income
     db.get(`SELECT sum(salary) as total FROM monthly_balances WHERE month IN (${placeholders})`, months, (err, row) => {
         if (err) console.error("Income Error:", err);
         response.totalIncome = row ? row.total : 0;
 
-        // Step B: Get Expenses Breakdown
         db.all(`SELECT category, sum(amount) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY category`, months, (err, rows) => {
             if (err) console.error("Breakdown Error:", err);
             response.categoryBreakdown = rows || [];
-            
-            // Calculate Total Expenses from the breakdown
             response.totalExpenses = response.categoryBreakdown.reduce((sum, item) => sum + item.total, 0);
 
-            // Step C: Get Monthly Trend & Send Response
             const sql = `
                 SELECT 
                     e.month, 
@@ -325,12 +254,180 @@ app.get('/api/dashboard', (req, res) => {
             db.all(sql, months, (err, rows) => {
                 if (err) console.error("Trend Error:", err);
                 response.monthlyTrend = rows || [];
-                
-                // FINAL SEND
                 res.json(response);
             });
         });
     });
 });
+
+// --- 8. SAVINGS ACCOUNTS & POTS ---
+
+app.get('/api/savings/structure', (req, res) => {
+    const query = `
+        SELECT 
+            a.id as account_id, a.name as account_name,
+            p.id as pot_id, p.name as pot_name, p.amount as pot_amount
+        FROM savings_accounts a
+        LEFT JOIN savings_pots p ON a.id = p.account_id
+    `;
+
+    db.all(query, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const accountsMap = new Map();
+        
+        rows.forEach(row => {
+            if (!accountsMap.has(row.account_id)) {
+                accountsMap.set(row.account_id, {
+                    id: row.account_id,
+                    name: row.account_name,
+                    total: 0,
+                    pots: []
+                });
+            }
+            if (row.pot_id) { 
+                const acc = accountsMap.get(row.account_id);
+                acc.pots.push({ id: row.pot_id, name: row.pot_name, amount: row.pot_amount });
+                acc.total += row.pot_amount;
+            }
+        });
+        res.json(Array.from(accountsMap.values()));
+    });
+});
+
+app.post('/api/savings/accounts', (req, res) => {
+    db.run("INSERT INTO savings_accounts (name) VALUES (?)", [req.body.name], function() {
+        res.json({ id: this.lastID });
+    });
+});
+
+app.delete('/api/savings/accounts/:id', (req, res) => {
+    db.serialize(() => {
+        db.run("DELETE FROM savings_pots WHERE account_id = ?", [req.params.id]);
+        db.run("DELETE FROM savings_accounts WHERE id = ?", [req.params.id]);
+    });
+    res.json({ success: true });
+});
+
+app.post('/api/savings/pots', (req, res) => {
+    const { accountId, name, amount } = req.body;
+    db.run("INSERT INTO savings_pots (account_id, name, amount) VALUES (?, ?, ?)", [accountId, name, amount || 0], function() {
+        res.json({ id: this.lastID });
+    });
+});
+
+app.put('/api/savings/pots/:id', (req, res) => {
+    const { name, amount } = req.body;
+    db.run("UPDATE savings_pots SET name = ?, amount = ? WHERE id = ?", [name, amount, req.params.id], () => res.json({ success: true }));
+});
+
+app.delete('/api/savings/pots/:id', (req, res) => {
+    db.run("DELETE FROM savings_pots WHERE id = ?", [req.params.id], () => res.json({ success: true }));
+});
+
+// --- 9. SANDBOX ENDPOINTS ---
+
+app.get('/api/sandbox', (req, res) => {
+    db.all("SELECT * FROM sandbox_expenses", (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/sandbox', (req, res) => {
+    const { name, amount, category, who } = req.body;
+    db.run("INSERT INTO sandbox_expenses (name, amount, category, who, paid) VALUES (?, ?, ?, ?, 0)", 
+        [name, amount, category, who], 
+        function() { res.json({ id: this.lastID }); }
+    );
+});
+
+app.put('/api/sandbox/:id', (req, res) => {
+    const { name, amount, category, who } = req.body;
+    db.run("UPDATE sandbox_expenses SET name=?, amount=?, category=?, who=? WHERE id=?", 
+        [name, amount, category, who, req.params.id], 
+        () => res.json({ success: true })
+    );
+});
+
+app.delete('/api/sandbox/:id', (req, res) => {
+    db.run("DELETE FROM sandbox_expenses WHERE id=?", [req.params.id], () => res.json({ success: true }));
+});
+
+app.post('/api/sandbox/clear', (req, res) => {
+    db.run("DELETE FROM sandbox_expenses", () => res.json({ success: true }));
+});
+
+app.post('/api/sandbox/import', (req, res) => {
+    const { month } = req.body;
+    db.all("SELECT name, amount, category, who FROM expenses WHERE month = ?", [month], (err, rows) => {
+        if(!rows) return res.json({ success: true });
+        const stmt = db.prepare("INSERT INTO sandbox_expenses (name, amount, category, who, paid) VALUES (?, ?, ?, ?, 0)");
+        rows.forEach(r => stmt.run(r.name, r.amount, r.category, r.who));
+        stmt.finalize(() => res.json({ success: true }));
+    });
+});
+
+app.get('/api/sandbox/profiles', (req, res) => {
+    db.all("SELECT id, name, salary FROM sandbox_profiles", (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/sandbox/profiles', (req, res) => {
+    const { name, salary, expenses } = req.body;
+    if(!name) return res.status(400).json({error: "Name required"});
+    const items = JSON.stringify(expenses);
+    db.run("INSERT INTO sandbox_profiles (name, salary, items) VALUES (?, ?, ?)", [name, salary, items], function() {
+        res.json({ id: this.lastID });
+    });
+});
+
+app.delete('/api/sandbox/profiles/:id', (req, res) => {
+    db.run("DELETE FROM sandbox_profiles WHERE id = ?", [req.params.id], () => res.json({ success: true }));
+});
+
+app.post('/api/sandbox/profiles/:id/load', (req, res) => {
+    db.get("SELECT * FROM sandbox_profiles WHERE id = ?", [req.params.id], (err, row) => {
+        if(!row) return res.status(404).json({error: "Profile not found"});
+        
+        const expenses = JSON.parse(row.items || '[]');
+        
+        db.serialize(() => {
+            db.run("DELETE FROM sandbox_expenses"); 
+            const stmt = db.prepare("INSERT INTO sandbox_expenses (name, amount, category, who, paid) VALUES (?, ?, ?, ?, 0)");
+            expenses.forEach(r => stmt.run(r.name, r.amount, r.category, r.who));
+            stmt.finalize(() => {
+                res.json({ success: true, salary: row.salary });
+            });
+        });
+    });
+});
+
+// --- 10. CHRISTMAS ENDPOINTS (NEW) ---
+
+app.get('/api/christmas', (req, res) => {
+    db.all("SELECT * FROM christmas_list", (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/christmas', (req, res) => {
+    const { recipient, item, amount } = req.body;
+    db.run("INSERT INTO christmas_list (recipient, item, amount, bought) VALUES (?, ?, ?, 0)", [recipient, item, amount], function() {
+        res.json({ id: this.lastID });
+    });
+});
+
+app.put('/api/christmas/:id', (req, res) => {
+    const { recipient, item, amount } = req.body;
+    db.run("UPDATE christmas_list SET recipient=?, item=?, amount=? WHERE id=?", [recipient, item, amount, req.params.id], () => res.json({ success: true }));
+});
+
+app.post('/api/christmas/:id/toggle', (req, res) => {
+    const { bought } = req.body;
+    db.run("UPDATE christmas_list SET bought=? WHERE id=?", [bought ? 1 : 0, req.params.id], () => res.json({ success: true }));
+});
+
+app.delete('/api/christmas/:id', (req, res) => {
+    db.run("DELETE FROM christmas_list WHERE id=?", [req.params.id], () => res.json({ success: true }));
+});
+
+
+// --- SERVE ---
+app.use(express.static(path.join(__dirname, '../client/dist')));
+app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, '../client/dist', 'index.html')));
 
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
