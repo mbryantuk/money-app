@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import { useTheme } from 'vuetify';
 
@@ -24,7 +24,7 @@ const snackbar = ref(false);
 const snackbarText = ref('');
 
 // GLOBAL DATA STATE
-const currentMonth = ref(new Date().toISOString().slice(0, 7));
+const currentMonth = ref(''); // Will be computed on mount
 const defaultSalary = ref(0);
 const availableCategories = ref([]);
 const availablePeople = ref([]);
@@ -39,8 +39,45 @@ const calcResetNext = ref(false);
 const isDark = computed(() => theme.global.current.value.dark);
 const toggleTheme = () => theme.global.name.value = isDark.value ? 'myCustomTheme' : 'dark';
 
+// --- FINANCIAL MONTH LOGIC ---
+const getPayDate = (year, month) => {
+    // 20th or the working day before
+    let d = new Date(year, month, 20);
+    const day = d.getDay(); 
+    if (day === 0) d.setDate(18); // Sun -> Fri
+    else if (day === 6) d.setDate(19); // Sat -> Fri
+    else if (day === 1) d.setDate(17); // Mon -> Fri (Working Day *Before* 20th)
+    else d.setDate(19); // Tue-Fri -> 19th
+    return d.getDate();
+};
+
+const determineCurrentFinancialMonth = () => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth(); // 0-11
+    const d = today.getDate();
+
+    // The user names the month based on the START date.
+    // e.g. Nov 19 -> Dec 18 is "November"
+    
+    const payDayThisMonth = getPayDate(y, m);
+
+    if (d < payDayThisMonth) {
+        // Before payday? We are still in previous month's budget.
+        // e.g. Nov 10th (payday 19th) -> We are in October budget? 
+        // Wait, User said "Nov 19 to Dec 18" is "Nov".
+        // So "Oct 19 to Nov 18" is "Oct".
+        // So on Nov 10th, we are in "Oct".
+        const prevDate = new Date(y, m - 1, 1);
+        currentMonth.value = prevDate.toISOString().slice(0, 7);
+    } else {
+        // After payday? We are in current month's budget.
+        // e.g. Nov 20th -> "Nov".
+        currentMonth.value = new Date(y, m, 1).toISOString().slice(0, 7);
+    }
+};
+
 // --- GLOBAL FETCH ---
-// We fetch settings here because multiple tabs use them
 const fetchSettings = async () => {
   try {
     const res = await axios.get(`${API_URL}/settings`);
@@ -83,6 +120,7 @@ const calcClear = () => { calcDisplay.value = '0'; calcPrevious = ''; calcOperat
 const copyToClipboard = () => { navigator.clipboard.writeText(calcDisplay.value); showMsg('Copied'); };
 
 onMounted(() => {
+    determineCurrentFinancialMonth();
     fetchSettings();
 });
 </script>
@@ -147,7 +185,7 @@ onMounted(() => {
         
         <DashboardTab v-if="tab === 'dashboard'" />
 
-        <BudgetTab v-if="tab === 'budget'" 
+        <BudgetTab v-if="tab === 'budget' && currentMonth" 
             v-model:month="currentMonth"
             :people="availablePeople"
             :categories="availableCategories"

@@ -33,15 +33,43 @@ const columns = ref([
 ]);
 const sortKey = ref('paid');
 const sortOrder = ref(1);
-
-// New Expense Form
 const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing' });
 
-// COMPUTED
+// --- PAY DATE CALCULATION (Working day before 20th) ---
+const getPayDate = (year, month) => {
+    let d = new Date(year, month, 20);
+    const day = d.getDay(); 
+    // If 20th is Sun(0) -> Fri(18). If Sat(6) -> Fri(19). 
+    // If Mon(1) -> Fri(17) (Working day BEFORE). Else -> 19th.
+    if (day === 0) d.setDate(18); 
+    else if (day === 6) d.setDate(19); 
+    else if (day === 1) d.setDate(17); 
+    else d.setDate(19); 
+    return d.getDate();
+};
+
 const formattedMonth = computed(() => {
-    const [y, m] = props.month.split('-');
-    return new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+    if (!props.month) return { main: '', range: '' };
+    const [y, m] = props.month.split('-').map(Number);
+    
+    // Logic: The "November" budget covers Nov 19 -> Dec 18
+    // Start: Payday of this month (m-1 in JS index)
+    // End: Payday of next month (m) - 1 day
+    
+    const startDay = getPayDate(y, m - 1); 
+    const endDayRef = getPayDate(y, m);
+    
+    const startMonthName = new Date(y, m - 1).toLocaleString('default', { month: 'short' });
+    const endMonthName = new Date(y, m).toLocaleString('default', { month: 'short' });
+    const mainMonthName = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+    return {
+        main: mainMonthName,
+        range: `${startMonthName} ${startDay} - ${endMonthName} ${endDayRef - 1}`
+    };
 });
+
+// COMPUTED
 const totalExpenses = computed(() => expenses.value.reduce((acc, item) => acc + Number(item.amount), 0));
 const paidExpenses = computed(() => expenses.value.filter(item => item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
 const leftToPay = computed(() => expenses.value.filter(item => !item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
@@ -121,12 +149,15 @@ onMounted(fetchData);
 
 <template>
     <div>
-        <v-card class="mb-6 rounded-xl mx-auto" elevation="2" max-width="600">
+        <v-card class="mb-6 rounded-xl mx-auto text-center" elevation="2" max-width="600">
             <div class="d-flex align-center justify-space-between pa-2">
                 <div style="width: 40px"></div>
                 <div class="d-flex align-center">
                     <v-btn icon="mdi-chevron-left" @click="changeMonth(-1)" variant="text" size="large" color="primary"></v-btn>
-                    <h2 class="text-h5 font-weight-bold text-primary mx-6 mb-0">{{ formattedMonth }}</h2>
+                    <div>
+                        <h2 class="text-h5 font-weight-bold text-primary mb-0" style="line-height: 1.2">{{ formattedMonth.main }}</h2>
+                        <div class="text-caption text-medium-emphasis font-weight-bold">{{ formattedMonth.range }}</div>
+                    </div>
                     <v-btn icon="mdi-chevron-right" @click="changeMonth(1)" variant="text" size="large" color="primary"></v-btn>
                 </div>
                 <div style="width: 40px"><v-btn v-if="expenses.length" icon="mdi-delete-sweep-outline" color="red-lighten-1" variant="text" @click="resetMonth"></v-btn></div>
