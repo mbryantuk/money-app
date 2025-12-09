@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import { useTheme } from 'vuetify';
-import draggable from 'vuedraggable'; // IMPORT DRAGGABLE
+import draggable from 'vuedraggable';
 
 // CONFIG
 const API_URL = 'http://localhost:4001/api';
@@ -25,7 +25,18 @@ const currentMonth = ref(new Date().toISOString().slice(0, 7));
 const currentBalance = ref(0);
 const salary = ref(0);
 const expenses = ref([]);
-const savings = ref([]);
+const savingsAccounts = ref([]); 
+
+// DASHBOARD STATE
+const dashboardData = ref({ totalIncome: 0, totalExpenses: 0, categoryBreakdown: [], monthlyTrend: [] });
+const financialYearStart = ref(new Date().getMonth() >= 3 ? new Date().getFullYear() : new Date().getFullYear() - 1); // Auto-detect current FY
+
+// MORTGAGE STATE
+const mortgageData = ref({
+  soldPrice: 0,
+  h2b: { balance: 0, percentage: 0 },
+  mortgages: []
+});
 
 // SETTINGS STATE
 const defaultSalary = ref(0);
@@ -33,13 +44,13 @@ const availableCategories = ref([]);
 const availablePeople = ref([]);
 const templates = ref([]);
 
-// --- COLUMNS CONFIGURATION (NEW) ---
+// --- COLUMNS CONFIGURATION ---
 const defaultColumns = [
   { key: 'status', label: 'Status', width: '80px', align: 'center', sortable: true },
   { key: 'who', label: 'Who', width: '100px', align: 'left', sortable: true },
   { key: 'name', label: 'Bill Name', width: '', align: 'left', sortable: true },
   { key: 'amount', label: 'Amount', width: '120px', align: 'right', sortable: true },
-  { key: 'category', label: 'Category', width: '140px', align: 'left', sortable: false }, // Category hidden on mobile usually, but here distinct
+  { key: 'category', label: 'Category', width: '140px', align: 'left', sortable: false },
   { key: 'actions', label: 'Edit', width: '80px', align: 'end', sortable: false }
 ];
 const expenseColumns = ref([...defaultColumns]);
@@ -49,6 +60,7 @@ const editingId = ref(null);
 const editForm = ref({});
 const templateForm = ref({});
 const renameForm = ref({ type: 'people', oldName: null, newName: '' });
+const newAccountName = ref('');
 
 // NEW EXPENSE FORM
 const newExpenseName = ref('');
@@ -95,6 +107,32 @@ const breakdownByWho = computed(() => {
   return groups;
 });
 
+// MORTGAGE COMPUTED
+const totalMortgageBalance = computed(() => {
+  return mortgageData.value.mortgages.reduce((acc, m) => acc + Number(m.balance || 0), 0);
+});
+
+const totalLiabilities = computed(() => {
+  return totalMortgageBalance.value + Number(mortgageData.value.h2b.balance || 0);
+});
+
+const estimatedEquity = computed(() => {
+  return Number(mortgageData.value.soldPrice || 0) - totalLiabilities.value;
+});
+
+// DASHBOARD COMPUTED
+const totalNetWorth = computed(() => {
+  return estimatedEquity.value + totalSavings.value + currentBalance.value;
+});
+
+const fyString = computed(() => {
+  return `April ${financialYearStart.value} - March ${financialYearStart.value + 1}`;
+});
+
+const sortedCategoryBreakdown = computed(() => {
+  return [...dashboardData.value.categoryBreakdown].sort((a, b) => b.total - a.total);
+});
+
 // --- SORTING ---
 const sortKey = ref('paid');
 const sortOrder = ref(1);
@@ -125,6 +163,15 @@ const fetchAll = async () => {
   await fetchSettings();
   await fetchData();
   await fetchSavings();
+  await fetchMortgage();
+  await fetchDashboard();
+};
+
+const fetchDashboard = async () => {
+  try {
+    const res = await axios.get(`${API_URL}/dashboard`, { params: { year: financialYearStart.value } });
+    dashboardData.value = res.data;
+  } catch (e) { console.error("Dashboard Fetch Error", e); }
 };
 
 const fetchSettings = async () => {
@@ -152,16 +199,36 @@ const fetchData = async () => {
     currentBalance.value = parseFloat(res.data.balance) || 0;
     salary.value = parseFloat(res.data.salary) || defaultSalary.value;
     expenses.value = res.data.expenses || [];
-    savings.value = res.data.savings || [];
   } catch (err) { console.error("Data Error:", err); }
 };
 
 const fetchSavings = async () => {
-    const res = await axios.get(`${API_URL}/savings/structure`);
-    savingsAccounts.value = res.data;
+    try {
+        const res = await axios.get(`${API_URL}/savings/structure`);
+        savingsAccounts.value = res.data;
+    } catch (e) { console.error("Savings Fetch Error", e); }
 };
 
+const fetchMortgage = async () => {
+  try {
+    const res = await axios.get(`${API_URL}/mortgage`);
+    mortgageData.value = res.data;
+  } catch (e) { console.error("Mortgage Fetch Error", e); }
+};
+
+// --- WATCHERS ---
 watch(currentMonth, fetchData);
+watch(financialYearStart, fetchDashboard);
+
+// Auto-calculate H2B Balance when Price or % changes
+watch(
+  [() => mortgageData.value.soldPrice, () => mortgageData.value.h2b.percentage],
+  ([price, pct]) => {
+    const p = Number(price) || 0;
+    const r = Number(pct) || 0;
+    mortgageData.value.h2b.balance = parseFloat((p * (r / 100)).toFixed(2));
+  }
+);
 
 const changeMonth = (offset) => {
   const [year, month] = currentMonth.value.split('-').map(Number);
@@ -178,7 +245,6 @@ const showMsg = (text) => {
 
 // --- SAVE COLUMN LAYOUT ---
 const saveColumnLayout = async () => {
-    // We use the generic settings endpoint to save the JSON array of columns
     await axios.post(`${API_URL}/settings`, { 
         key: 'column_order', 
         value: JSON.stringify(expenseColumns.value) 
@@ -276,6 +342,25 @@ const deletePot = async (id) => {
     }
 };
 
+// --- MORTGAGE ACTIONS ---
+const saveMortgage = async () => {
+  try {
+    await axios.post(`${API_URL}/mortgage`, mortgageData.value);
+    showMsg('Mortgage details saved');
+  } catch (e) { console.error("Mortgage Save Error", e); }
+};
+
+const addLoan = () => {
+  mortgageData.value.mortgages.push({ id: Date.now(), name: 'New Loan', balance: 0, rate: 0, term: 0 });
+};
+
+const removeLoan = (index) => {
+  if(confirm("Remove this loan?")) {
+    mortgageData.value.mortgages.splice(index, 1);
+    saveMortgage(); 
+  }
+};
+
 // --- SETTINGS ---
 const saveSetting = async (key, value) => {
   const payload = typeof value === 'object' ? JSON.stringify(value) : value;
@@ -334,6 +419,7 @@ onMounted(fetchAll);
       <v-list nav density="compact" class="mt-2">
         <v-list-item prepend-icon="mdi-wallet-outline" title="Budget" value="budget" @click="tab = 'budget'" :active="tab === 'budget'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-piggy-bank-outline" title="Savings" value="savings" @click="tab = 'savings'" :active="tab === 'savings'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="tab = 'mortgage'" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-view-dashboard-outline" title="Dashboard" value="dashboard" @click="tab = 'dashboard'" :active="tab === 'dashboard'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-cog-outline" title="Settings" value="settings" @click="tab = 'settings'" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
       </v-list>
@@ -573,9 +659,171 @@ onMounted(fetchAll);
             </v-row>
         </div>
 
-        <div v-else-if="tab === 'dashboard'">
+        <div v-else-if="tab === 'mortgage'">
             <v-row>
-                <v-col cols="12" class="text-center py-12"><v-icon icon="mdi-chart-timeline-variant" size="100" color="primary" class="mb-4 opacity-50"></v-icon><h2 class="text-h4 font-weight-bold text-medium-emphasis">Year View Coming Soon</h2></v-col>
+                <v-col cols="12">
+                    <v-card class="rounded-xl overflow-hidden" elevation="4">
+                        <div class="d-flex flex-column flex-md-row">
+                            <div class="bg-blue-grey-darken-4 pa-6 flex-grow-1 text-center d-flex flex-column justify-center">
+                                <div class="text-subtitle-1 text-grey-lighten-1 mb-1">Estimated Equity</div>
+                                <div class="text-h3 font-weight-black text-green-accent-3">£{{ estimatedEquity.toLocaleString('en-GB', { minimumFractionDigits: 2 }) }}</div>
+                            </div>
+                            <div class="bg-surface pa-6 flex-grow-1">
+                                <v-row>
+                                    <v-col cols="6">
+                                        <div class="text-caption text-medium-emphasis">Sold Price</div>
+                                        <v-text-field v-model.number="mortgageData.soldPrice" prefix="£" variant="underlined" density="compact" class="text-h6 font-weight-bold" hide-details @change="saveMortgage"></v-text-field>
+                                    </v-col>
+                                    <v-col cols="6">
+                                        <div class="text-caption text-medium-emphasis text-end">Total Debt</div>
+                                        <div class="text-h6 font-weight-bold text-red-lighten-1 text-end mt-2">-£{{ totalLiabilities.toLocaleString() }}</div>
+                                    </v-col>
+                                </v-row>
+                            </div>
+                        </div>
+                    </v-card>
+                </v-col>
+
+                <v-col cols="12" md="8">
+                    <v-card class="rounded-lg mb-4" elevation="2" title="Mortgages & Loans">
+                        <template v-slot:append>
+                            <v-btn icon="mdi-plus" variant="text" color="primary" @click="addLoan"></v-btn>
+                        </template>
+                        <v-card-text class="pa-0">
+                            <v-table>
+                                <thead>
+                                    <tr class="bg-grey-lighten-4">
+                                        <th>Loan Name</th>
+                                        <th class="text-end">Balance</th>
+                                        <th class="text-end" style="width: 100px">Rate %</th>
+                                        <th class="text-end" style="width: 100px">Term (Y)</th>
+                                        <th style="width: 50px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(loan, i) in mortgageData.mortgages" :key="loan.id">
+                                        <td class="py-2"><v-text-field v-model="loan.name" variant="plain" density="compact" hide-details></v-text-field></td>
+                                        <td class="py-2"><v-text-field v-model.number="loan.balance" prefix="£" type="number" variant="plain" density="compact" hide-details class="text-end font-monospace font-weight-bold"></v-text-field></td>
+                                        <td class="py-2"><v-text-field v-model.number="loan.rate" suffix="%" type="number" variant="plain" density="compact" hide-details class="text-end text-caption"></v-text-field></td>
+                                        <td class="py-2"><v-text-field v-model.number="loan.term" suffix="Yr" type="number" variant="plain" density="compact" hide-details class="text-end text-caption"></v-text-field></td>
+                                        <td><v-btn icon="mdi-delete" color="grey-lighten-1" variant="text" size="x-small" @click="removeLoan(i)"></v-btn></td>
+                                    </tr>
+                                </tbody>
+                            </v-table>
+                        </v-card-text>
+                    </v-card>
+
+                    <v-card class="rounded-lg border-s-lg border-info" elevation="2">
+                        <div class="d-flex align-center justify-space-between pa-4">
+                            <div class="d-flex align-center">
+                                <v-icon icon="mdi-home-group" color="info" class="mr-3" size="large"></v-icon>
+                                <div>
+                                    <div class="text-subtitle-1 font-weight-bold">Help to Buy Loan</div>
+                                    <div class="text-caption text-medium-emphasis">Government Equity Share</div>
+                                </div>
+                            </div>
+                            <div class="d-flex align-center gap-4">
+                                <div style="width: 80px">
+                                    <v-text-field v-model.number="mortgageData.h2b.percentage" label="Share %" density="compact" variant="outlined" hide-details suffix="%"></v-text-field>
+                                </div>
+                                <div style="width: 140px">
+                                    <v-text-field v-model.number="mortgageData.h2b.balance" label="Balance" prefix="£" density="compact" variant="outlined" hide-details class="font-weight-bold"></v-text-field>
+                                </div>
+                            </div>
+                        </div>
+                    </v-card>
+                </v-col>
+
+                <v-col cols="12" md="4">
+                    <v-card class="rounded-lg pa-4 mb-4 bg-surface" elevation="2">
+                        <div class="text-overline mb-2">Details</div>
+                        <div class="d-flex justify-space-between mb-2">
+                            <span class="text-body-2">Mortgage Debt</span>
+                            <span class="font-weight-bold">£{{ totalMortgageBalance.toLocaleString() }}</span>
+                        </div>
+                        <div class="d-flex justify-space-between mb-4">
+                            <span class="text-body-2">H2B Equity Loan</span>
+                            <span class="font-weight-bold">£{{ Number(mortgageData.h2b.balance).toLocaleString() }}</span>
+                        </div>
+                        <v-divider class="mb-4"></v-divider>
+                        <v-btn block color="primary" size="large" @click="saveMortgage" prepend-icon="mdi-content-save">Save Changes</v-btn>
+                    </v-card>
+                </v-col>
+            </v-row>
+        </div>
+
+        <div v-else-if="tab === 'dashboard'">
+            <div class="d-flex align-center justify-space-between mb-6">
+                <h2 class="text-h5 font-weight-bold">Financial Year {{ fyString }}</h2>
+                <div class="d-flex align-center">
+                    <v-btn icon="mdi-chevron-left" variant="text" @click="financialYearStart--"></v-btn>
+                    <span class="font-weight-bold text-h6 mx-2">{{ financialYearStart }}</span>
+                    <v-btn icon="mdi-chevron-right" variant="text" @click="financialYearStart++"></v-btn>
+                </div>
+            </div>
+
+            <v-card class="mb-6 rounded-xl bg-grey-darken-4 text-white pa-6" elevation="4">
+                <div class="d-flex align-center justify-space-between">
+                    <div>
+                        <div class="text-subtitle-1 text-grey-lighten-1">Total Net Worth</div>
+                        <div class="text-h3 font-weight-black mt-1">£{{ totalNetWorth.toLocaleString() }}</div>
+                        <div class="text-caption text-grey mt-2">
+                            Equity (£{{ estimatedEquity.toLocaleString() }}) + 
+                            Savings (£{{ totalSavings.toLocaleString() }}) + 
+                            Cash (£{{ currentBalance.toLocaleString() }})
+                        </div>
+                    </div>
+                    <v-icon icon="mdi-chart-line-variant" size="64" class="opacity-20"></v-icon>
+                </div>
+            </v-card>
+
+            <v-row>
+                <v-col cols="12" md="6">
+                    <v-card class="rounded-lg h-100 pa-4" elevation="2">
+                        <div class="text-h6 font-weight-bold mb-4">Yearly Overview</div>
+                        
+                        <div class="d-flex justify-space-between mb-2">
+                            <span>Total Income</span>
+                            <span class="font-weight-bold text-green">+£{{ dashboardData.totalIncome.toLocaleString() }}</span>
+                        </div>
+                        <v-progress-linear :model-value="100" color="green-lighten-2" height="8" rounded></v-progress-linear>
+
+                        <div class="d-flex justify-space-between mt-6 mb-2">
+                            <span>Total Expenses</span>
+                            <span class="font-weight-bold text-red">-£{{ dashboardData.totalExpenses.toLocaleString() }}</span>
+                        </div>
+                        <v-progress-linear :model-value="100" color="red-lighten-2" height="8" rounded></v-progress-linear>
+
+                        <div class="mt-6 pa-4 bg-grey-lighten-4 rounded text-center">
+                            <div class="text-caption text-medium-emphasis">Savings Rate</div>
+                            <div class="text-h5 font-weight-bold" :class="dashboardData.totalIncome > dashboardData.totalExpenses ? 'text-green' : 'text-red'">
+                                {{ dashboardData.totalIncome > 0 ? Math.round(((dashboardData.totalIncome - dashboardData.totalExpenses) / dashboardData.totalIncome) * 100) : 0 }}%
+                            </div>
+                        </div>
+                    </v-card>
+                </v-col>
+
+                <v-col cols="12" md="6">
+                    <v-card class="rounded-lg h-100 pa-4" elevation="2">
+                        <div class="text-h6 font-weight-bold mb-4">Spending by Category</div>
+                        <div v-if="dashboardData.categoryBreakdown.length === 0" class="text-center text-medium-emphasis py-8">No data for this year</div>
+                        
+                        <div v-else class="d-flex flex-column gap-3">
+                            <div v-for="cat in sortedCategoryBreakdown" :key="cat.category" class="mb-3">
+                                <div class="d-flex justify-space-between mb-1">
+                                    <span class="text-body-2 font-weight-medium">{{ cat.category }}</span>
+                                    <span class="text-body-2 font-weight-bold">£{{ cat.total.toLocaleString() }}</span>
+                                </div>
+                                <v-progress-linear 
+                                    :model-value="(cat.total / dashboardData.totalExpenses) * 100" 
+                                    color="primary" 
+                                    height="6" 
+                                    rounded
+                                ></v-progress-linear>
+                            </div>
+                        </div>
+                    </v-card>
+                </v-col>
             </v-row>
         </div>
 

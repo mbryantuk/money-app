@@ -221,7 +221,35 @@ app.delete('/api/savings/accounts/:id', (req, res) => {
     });
     res.json({ success: true });
 });
+// ... existing settings endpoints ...
 
+// --- MORTGAGE ENDPOINTS ---
+
+app.get('/api/mortgage', (req, res) => {
+    db.get("SELECT value FROM settings WHERE key = 'mortgage_data'", (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        // Return saved data or a default structure if nothing exists
+        const defaultData = {
+            soldPrice: 460000,
+            h2b: { balance: 92000, percentage: 20 },
+            mortgages: [
+                { id: 1, name: 'Main Mortgage', balance: 151455.79, rate: 3.45, term: 20 },
+                { id: 2, name: 'Extra Borrowing', balance: 80139.80, rate: 4.15, term: 15 }
+            ]
+        };
+        res.json(row ? JSON.parse(row.value) : defaultData);
+    });
+});
+
+app.post('/api/mortgage', (req, res) => {
+    const data = JSON.stringify(req.body);
+    db.run("INSERT INTO settings (key, value) VALUES ('mortgage_data', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [data], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// ... rest of your code ...
 // Add Pot
 app.post('/api/savings/pots', (req, res) => {
     const { accountId, name, amount } = req.body;
@@ -244,5 +272,65 @@ app.delete('/api/savings/pots/:id', (req, res) => {
 // --- SERVE ---
 app.use(express.static(path.join(__dirname, '../client/dist')));
 app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, '../client/dist', 'index.html')));
+
+// --- DASHBOARD ENDPOINT ---
+app.get('/api/dashboard', (req, res) => {
+    const startYear = parseInt(req.query.year);
+    if (!startYear) return res.status(400).json({ error: "Year required" });
+
+    // 1. Generate list of months (e.g., "2025-04", "2025-05"...)
+    const months = [];
+    for (let i = 0; i < 12; i++) {
+        const d = new Date(startYear, 3 + i, 1); // 3 = April
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        months.push(`${y}-${m}`);
+    }
+    const placeholders = months.map(() => '?').join(',');
+    
+    const response = {
+        totalIncome: 0,
+        totalExpenses: 0,
+        categoryBreakdown: [],
+        monthlyTrend: []
+    };
+
+    // 2. Fetch Data Sequentially (Nested to guarantee order)
+    
+    // Step A: Get Total Income
+    db.get(`SELECT sum(salary) as total FROM monthly_balances WHERE month IN (${placeholders})`, months, (err, row) => {
+        if (err) console.error("Income Error:", err);
+        response.totalIncome = row ? row.total : 0;
+
+        // Step B: Get Expenses Breakdown
+        db.all(`SELECT category, sum(amount) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY category`, months, (err, rows) => {
+            if (err) console.error("Breakdown Error:", err);
+            response.categoryBreakdown = rows || [];
+            
+            // Calculate Total Expenses from the breakdown
+            response.totalExpenses = response.categoryBreakdown.reduce((sum, item) => sum + item.total, 0);
+
+            // Step C: Get Monthly Trend & Send Response
+            const sql = `
+                SELECT 
+                    e.month, 
+                    SUM(e.amount) as expense_total,
+                    (SELECT salary FROM monthly_balances WHERE month = e.month) as income_val
+                FROM expenses e
+                WHERE e.month IN (${placeholders})
+                GROUP BY e.month
+                ORDER BY e.month ASC
+            `;
+
+            db.all(sql, months, (err, rows) => {
+                if (err) console.error("Trend Error:", err);
+                response.monthlyTrend = rows || [];
+                
+                // FINAL SEND
+                res.json(response);
+            });
+        });
+    });
+});
 
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
