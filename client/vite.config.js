@@ -13,8 +13,8 @@ export default defineConfig({
         enabled: true // ✅ Allows you to test PWA in Dev Mode
       },
   manifest: {
-        name: 'Money 2.0 Tracker',
-        short_name: 'Money 2.0',
+        name: 'Money Tracker',
+        short_name: 'Money',
         description: 'Personal Finance Dashboard',
         theme_color: '#1976D2',
         background_color: '#F2F5F8',
