@@ -30,7 +30,7 @@ db.serialize(() => {
         items TEXT
     )`);
 
-    // Christmas List (NEW)
+    // Christmas List
     db.run(`CREATE TABLE IF NOT EXISTS christmas_list (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         recipient TEXT,
@@ -48,15 +48,12 @@ app.get('/api/data', (req, res) => {
 
     db.get("SELECT amount as balance, salary FROM monthly_balances WHERE month = ?", [month], (err, row) => {
         if (!row) {
-            db.get("SELECT value FROM settings WHERE key = 'default_salary'", (err, setting) => {
-                const def = setting ? parseFloat(setting.value) : 0;
-                response.balance = 0; 
-                response.salary = def; 
-                fetchRest(response);
-            });
+            response.balance = 0; 
+            response.salary = 0; 
+            fetchRest(response);
         } else {
             response.balance = row.balance;
-            response.salary = row.salary;
+            response.salary = row.salary || 0;
             fetchRest(response);
         }
     });
@@ -209,7 +206,7 @@ app.post('/api/mortgage', (req, res) => {
     });
 });
 
-// --- 7. DASHBOARD ENDPOINT ---
+// --- 7. DASHBOARD ENDPOINT (UPDATED) ---
 
 app.get('/api/dashboard', (req, res) => {
     const startYear = parseInt(req.query.year);
@@ -228,19 +225,23 @@ app.get('/api/dashboard', (req, res) => {
         totalIncome: 0,
         totalExpenses: 0,
         categoryBreakdown: [],
-        monthlyTrend: []
+        monthlyTrend: [],
+        categoryTrend: [] // NEW FIELD
     };
 
+    // 1. Total Income
     db.get(`SELECT sum(salary) as total FROM monthly_balances WHERE month IN (${placeholders})`, months, (err, row) => {
         if (err) console.error("Income Error:", err);
         response.totalIncome = row ? row.total : 0;
 
+        // 2. Category Breakdown (Yearly Total)
         db.all(`SELECT category, sum(amount) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY category`, months, (err, rows) => {
             if (err) console.error("Breakdown Error:", err);
             response.categoryBreakdown = rows || [];
             response.totalExpenses = response.categoryBreakdown.reduce((sum, item) => sum + item.total, 0);
 
-            const sql = `
+            // 3. Monthly Trend (Total Expense vs Income)
+            const sqlTrend = `
                 SELECT 
                     e.month, 
                     SUM(e.amount) as expense_total,
@@ -251,10 +252,24 @@ app.get('/api/dashboard', (req, res) => {
                 ORDER BY e.month ASC
             `;
 
-            db.all(sql, months, (err, rows) => {
+            db.all(sqlTrend, months, (err, rows) => {
                 if (err) console.error("Trend Error:", err);
                 response.monthlyTrend = rows || [];
-                res.json(response);
+
+                // 4. NEW: Category Trend over time (Breakdown per month)
+                const sqlCatTrend = `
+                    SELECT month, category, SUM(amount) as total 
+                    FROM expenses 
+                    WHERE month IN (${placeholders}) 
+                    GROUP BY month, category
+                    ORDER BY month ASC
+                `;
+
+                db.all(sqlCatTrend, months, (err, catRows) => {
+                    if (err) console.error("Cat Trend Error:", err);
+                    response.categoryTrend = catRows || [];
+                    res.json(response);
+                });
             });
         });
     });
@@ -398,7 +413,7 @@ app.post('/api/sandbox/profiles/:id/load', (req, res) => {
     });
 });
 
-// --- 10. CHRISTMAS ENDPOINTS (NEW) ---
+// --- 10. CHRISTMAS ENDPOINTS ---
 
 app.get('/api/christmas', (req, res) => {
     db.all("SELECT * FROM christmas_list", (err, rows) => res.json(rows || []));

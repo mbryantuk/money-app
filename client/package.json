@@ -11,6 +11,7 @@
   "dependencies": {
     "@mdi/font": "^7.4.47",
     "axios": "^1.13.2",
+    "chart.js": "^4.5.1",
     "vue": "^3.5.24",
     "vuedraggable": "^4.1.0",
     "vuetify": "^3.11.2"
