@@ -4,7 +4,7 @@ import axios from 'axios';
 import Chart from 'chart.js/auto';
 import { useTheme } from 'vuetify';
 
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 const theme = useTheme();
 const isDark = computed(() => theme.global.current.value.dark);
 

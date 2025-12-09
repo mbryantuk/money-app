@@ -13,7 +13,7 @@ import SandboxTab from './components/SandboxTab.vue';
 import SettingsTab from './components/SettingsTab.vue';
 
 // CONFIG
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 const theme = useTheme();
 
 // UI STATE

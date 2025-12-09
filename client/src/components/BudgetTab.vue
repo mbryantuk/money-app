@@ -11,7 +11,7 @@ const props = defineProps({
   defaultSalary: Number
 });
 const emit = defineEmits(['update:month', 'notify']);
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 const theme = useTheme();
 const isDark = computed(() => theme.global.current.value.dark);
 

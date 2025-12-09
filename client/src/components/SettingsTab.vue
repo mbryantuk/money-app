@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import axios from 'axios';
 const props = defineProps({ people: Array, categories: Array, defaultSalary: Number, templates: Array });
 const emit = defineEmits(['notify', 'refresh', 'update:people', 'update:categories', 'update:default-salary']);
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 
 const renameForm = ref({ type: 'people', oldName: null, newName: '' });
 const newTemplate = ref({});

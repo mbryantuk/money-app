@@ -5,7 +5,7 @@ import { useTheme } from 'vuetify';
 
 const props = defineProps({ people: Array, categories: Array, currentMonth: String });
 const emit = defineEmits(['notify']);
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 const theme = useTheme();
 const isDark = computed(() => theme.global.current.value.dark);
 

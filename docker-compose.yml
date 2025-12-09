@@ -1,0 +1,11 @@
+services:
+  money-app:
+    build: .
+    container_name: money-app
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    volumes:
+      # Map the database file from your Pi to the container
+      # This ensures your data persists even if you rebuild the app
+      - ./server/finance.db:/app/server/finance.db

@@ -1,0 +1,7 @@
+node_modules
+client/node_modules
+server/node_modules
+.git
+.DS_Store
+server/finance.db 
+# We ignore the DB so we don't overwrite the live one with a blank one during build

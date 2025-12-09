@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import axios from 'axios';
 const emit = defineEmits(['notify']);
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 
 const mortgageData = ref({ soldPrice: 0, h2b: { balance: 0, percentage: 0 }, mortgages: [] });
 

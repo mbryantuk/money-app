@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import axios from 'axios';
-const API_URL = 'http://localhost:4001/api';
+const API_URL = '/api';
 
 const list = ref([]);
 const newGift = ref({ recipient: '', item: '', amount: '' });
