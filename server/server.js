@@ -255,8 +255,17 @@ app.get('/api/christmas', (req, res) => db.all("SELECT * FROM christmas_list", (
 app.post('/api/christmas', (req, res) => { const { recipient, item, amount } = req.body; db.run("INSERT INTO christmas_list (recipient, item, amount, bought) VALUES (?, ?, ?, 0)", [recipient, item, amount], function() { res.json({ id: this.lastID }); });});
 app.put('/api/christmas/:id', (req, res) => { const { recipient, item, amount } = req.body; db.run("UPDATE christmas_list SET recipient=?, item=?, amount=? WHERE id=?", [recipient, item, amount, req.params.id], () => res.json({ success: true }));});
 app.post('/api/christmas/:id/toggle', (req, res) => { const { bought } = req.body; db.run("UPDATE christmas_list SET bought=? WHERE id=?", [bought ? 1 : 0, req.params.id], () => res.json({ success: true }));});
+// FIXED: Added missing closing parenthesis ')' at the end of this line
 app.delete('/api/christmas/:id', (req, res) => db.run("DELETE FROM christmas_list WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
+// --- API 404 FALLBACK (Prevents serving HTML for invalid API calls) ---
+// UPDATED: Use '/api' prefix to handle any route starting with /api
+app.use('/api', (req, res) => {
+    res.status(404).json({ error: `API Endpoint not found: ${req.originalUrl}` });
+});
+
+// --- SERVE ---
 app.use(express.static(path.join(__dirname, '../client/dist')));
 app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, '../client/dist', 'index.html')));
+
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));

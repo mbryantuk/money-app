@@ -130,7 +130,7 @@ onMounted(() => {
     <v-navigation-drawer v-model="drawer" app color="surface">
       <div class="pa-4">
         <h2 class="text-h6 font-weight-bold text-primary d-flex align-center">
-          <v-icon icon="mdi-bank" class="mr-2"></v-icon> Money 2.0
+          <v-icon icon="mdi-bank" class="mr-2"></v-icon> Money App
         </h2>
       </div>
       <v-divider></v-divider>
