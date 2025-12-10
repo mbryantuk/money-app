@@ -34,6 +34,14 @@ const sortedCategoryBreakdown = computed(() => {
   return [...(data.value.categoryBreakdown || [])].sort((a, b) => b.total - a.total);
 });
 
+// --- SHARED COLOR LOGIC (Synced with BudgetTab) ---
+const getStringHue = (str) => {
+    let hash = 0;
+    if(!str) return 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    return Math.abs(hash % 360);
+};
+
 const fetchAll = async () => {
     try {
         const dRes = await axios.get(`${API_URL}/dashboard`, { params: { year: financialYearStart.value } });
@@ -75,7 +83,7 @@ const renderCharts = async () => {
         });
     }
 
-    // --- 2. CATEGORY TRENDS (Fixed Empty Graph Issue) ---
+    // --- 2. CATEGORY TRENDS ---
     if (categoryChartCanvas.value) {
         const trendData = data.value.categoryTrend || [];
         const uniqueCats = [...new Set(trendData.map(d => d.category))];
@@ -113,7 +121,9 @@ const renderCharts = async () => {
         const whoData = data.value.whoBreakdown;
         const labels = whoData.map(d => d.who || 'Joint');
         const amounts = whoData.map(d => d.total);
-        const bgColors = labels.map(l => ({ 'Joint': '#FF9800', 'f1': '#2196F3', 'f2': '#00BCD4', 's': '#4CAF50', 'Matt': '#673AB7' }[l] || '#9E9E9E'));
+        
+        // Use the exact same hashing logic as BudgetTab (Saturation 70%, Lightness 40%)
+        const bgColors = labels.map(l => `hsl(${getStringHue(l)}, 70%, 40%)`);
 
         if (whoChartInstance) whoChartInstance.destroy();
         whoChartInstance = new Chart(whoChartCanvas.value, {

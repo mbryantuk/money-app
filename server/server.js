@@ -46,6 +46,13 @@ app.post('/api/salary', (req, res) => {
     db.run(`INSERT INTO monthly_balances (month, salary) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET salary=excluded.salary`, [month, amount], () => res.json({ success: true }));
 });
 
+// --- ADMIN ENDPOINTS (NEW) ---
+app.get('/api/admin/data', (req, res) => {
+    db.all("SELECT month, salary, amount as balance FROM monthly_balances ORDER BY month DESC", (err, rows) => {
+        res.json(rows || []);
+    });
+});
+
 // --- SETTINGS ---
 app.get('/api/settings', (req, res) => {
     db.all("SELECT * FROM settings", (err, rows) => {
@@ -96,7 +103,6 @@ app.post('/api/expenses/:id/toggle', (req, res) => {
 
 app.put('/api/expenses/:id', (req, res) => { const { name, amount, category, who } = req.body; db.run("UPDATE expenses SET name = ?, amount = ?, category = ?, who = ? WHERE id = ?", [name, amount, category, who, req.params.id], () => res.json({ success: true }));});
 
-// NEW: Delete Expense Endpoint
 app.delete('/api/expenses/:id', (req, res) => db.run("DELETE FROM expenses WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
 // --- MONTH MGMT ---

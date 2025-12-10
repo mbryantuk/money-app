@@ -2,7 +2,6 @@
 import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import { useTheme } from 'vuetify';
-// --- NEW: Import PWA Register Hook ---
 import { useRegisterSW } from 'virtual:pwa-register/vue';
 
 // COMPONENTS
@@ -12,20 +11,18 @@ import SavingsTab from './components/SavingsTab.vue';
 import MortgageTab from './components/MortgageTab.vue';
 import ChristmasTab from './components/ChristmasTab.vue';
 import SandboxTab from './components/SandboxTab.vue';
+import AdminTab from './components/AdminTab.vue';
 import SettingsTab from './components/SettingsTab.vue';
 
 // CONFIG
 const API_URL = '/api';
 const theme = useTheme();
 
-// --- NEW: PWA Auto-Update Polling ---
-// This checks for an update every 1 hour (3600000ms)
+// PWA Auto-Update
 const intervalMS = 60 * 60 * 1000;
 useRegisterSW({
   onRegistered(r) {
-    r && setInterval(() => {
-      r.update();
-    }, intervalMS);
+    r && setInterval(() => { r.update(); }, intervalMS);
   }
 });
 
@@ -37,7 +34,7 @@ const snackbar = ref(false);
 const snackbarText = ref('');
 
 // GLOBAL DATA STATE
-const currentMonth = ref(''); // Will be computed on mount
+const currentMonth = ref(''); 
 const defaultSalary = ref(0);
 const availableCategories = ref([]);
 const availablePeople = ref([]);
@@ -50,27 +47,24 @@ const calcResetNext = ref(false);
 
 // --- THEME ---
 const isDark = computed(() => theme.global.current.value.dark);
-// Use standard 'light' theme name instead of custom
 const toggleTheme = () => theme.global.name.value = isDark.value ? 'light' : 'dark';
 
 // --- FINANCIAL MONTH LOGIC ---
 const getPayDate = (year, month) => {
-    // 20th or the working day before
     let d = new Date(year, month, 20);
     const day = d.getDay(); 
-    if (day === 0) d.setDate(18); // Sun -> Fri
-    else if (day === 6) d.setDate(19); // Sat -> Fri
-    else if (day === 1) d.setDate(17); // Mon -> Fri (Working Day *Before* 20th)
-    else d.setDate(19); // Tue-Fri -> 19th
+    if (day === 0) d.setDate(18); 
+    else if (day === 6) d.setDate(19); 
+    else if (day === 1) d.setDate(17); 
+    else d.setDate(19); 
     return d.getDate();
 };
 
 const determineCurrentFinancialMonth = () => {
     const today = new Date();
     const y = today.getFullYear();
-    const m = today.getMonth(); // 0-11
+    const m = today.getMonth(); 
     const d = today.getDate();
-
     const payDayThisMonth = getPayDate(y, m);
 
     if (d < payDayThisMonth) {
@@ -98,11 +92,7 @@ const fetchSettings = async () => {
   } catch (e) { console.error("Settings Error", e); }
 };
 
-// --- HELPER ---
-const showMsg = (text) => {
-    snackbarText.value = text;
-    snackbar.value = true;
-};
+const showMsg = (text) => { snackbarText.value = text; snackbar.value = true; };
 
 // --- CALCULATOR LOGIC ---
 const calcAppend = (num) => {
@@ -145,6 +135,7 @@ onMounted(() => {
         <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="tab = 'mortgage'" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-gift-outline" title="Christmas" value="christmas" @click="tab = 'christmas'" :active="tab === 'christmas'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-test-tube" title="Sandbox" value="sandbox" @click="tab = 'sandbox'" :active="tab === 'sandbox'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-shield-account-outline" title="Admin" value="admin" @click="tab = 'admin'" :active="tab === 'admin'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-cog-outline" title="Settings" value="settings" @click="tab = 'settings'" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
       </v-list>
     </v-navigation-drawer>
@@ -209,6 +200,8 @@ onMounted(() => {
             :current-month="currentMonth"
             @notify="showMsg"
         />
+
+        <AdminTab v-if="tab === 'admin'" @notify="showMsg" />
 
         <SettingsTab v-if="tab === 'settings'" 
             v-model:people="availablePeople"
