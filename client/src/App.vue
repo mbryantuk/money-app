@@ -2,6 +2,8 @@
 import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import { useTheme } from 'vuetify';
+// --- NEW: Import PWA Register Hook ---
+import { useRegisterSW } from 'virtual:pwa-register/vue';
 
 // COMPONENTS
 import DashboardTab from './components/DashboardTab.vue';
@@ -15,6 +17,17 @@ import SettingsTab from './components/SettingsTab.vue';
 // CONFIG
 const API_URL = '/api';
 const theme = useTheme();
+
+// --- NEW: PWA Auto-Update Polling ---
+// This checks for an update every 1 hour (3600000ms)
+const intervalMS = 60 * 60 * 1000;
+useRegisterSW({
+  onRegistered(r) {
+    r && setInterval(() => {
+      r.update();
+    }, intervalMS);
+  }
+});
 
 // UI STATE
 const drawer = ref(true);
@@ -37,7 +50,8 @@ const calcResetNext = ref(false);
 
 // --- THEME ---
 const isDark = computed(() => theme.global.current.value.dark);
-const toggleTheme = () => theme.global.name.value = isDark.value ? 'myCustomTheme' : 'dark';
+// Use standard 'light' theme name instead of custom
+const toggleTheme = () => theme.global.name.value = isDark.value ? 'light' : 'dark';
 
 // --- FINANCIAL MONTH LOGIC ---
 const getPayDate = (year, month) => {
@@ -57,22 +71,12 @@ const determineCurrentFinancialMonth = () => {
     const m = today.getMonth(); // 0-11
     const d = today.getDate();
 
-    // The user names the month based on the START date.
-    // e.g. Nov 19 -> Dec 18 is "November"
-    
     const payDayThisMonth = getPayDate(y, m);
 
     if (d < payDayThisMonth) {
-        // Before payday? We are still in previous month's budget.
-        // e.g. Nov 10th (payday 19th) -> We are in October budget? 
-        // Wait, User said "Nov 19 to Dec 18" is "Nov".
-        // So "Oct 19 to Nov 18" is "Oct".
-        // So on Nov 10th, we are in "Oct".
         const prevDate = new Date(y, m - 1, 1);
         currentMonth.value = prevDate.toISOString().slice(0, 7);
     } else {
-        // After payday? We are in current month's budget.
-        // e.g. Nov 20th -> "Nov".
         currentMonth.value = new Date(y, m, 1).toISOString().slice(0, 7);
     }
 };
@@ -130,7 +134,7 @@ onMounted(() => {
     <v-navigation-drawer v-model="drawer" app color="surface">
       <div class="pa-4">
         <h2 class="text-h6 font-weight-bold text-primary d-flex align-center">
-          <v-icon icon="mdi-bank" class="mr-2"></v-icon> Money App
+          <v-icon icon="mdi-bank" class="mr-2"></v-icon> Money 2.0
         </h2>
       </div>
       <v-divider></v-divider>

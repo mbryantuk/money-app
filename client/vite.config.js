@@ -9,10 +9,17 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      devOptions: {
-        enabled: true // ✅ Allows you to test PWA in Dev Mode
+      // --- NEW: Aggressive Cache Cleaning & Update Logic ---
+      workbox: {
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,vue,txt,woff2}']
       },
-  manifest: {
+      devOptions: {
+        enabled: true 
+      },
+      manifest: {
         name: 'Money Tracker',
         short_name: 'Money',
         description: 'Personal Finance Dashboard',

@@ -1,13 +1,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
-import { useTheme } from 'vuetify';
+import draggable from 'vuedraggable';
 
 const props = defineProps({ people: Array, categories: Array, currentMonth: String });
 const emit = defineEmits(['notify']);
 const API_URL = '/api';
-const theme = useTheme();
-const isDark = computed(() => theme.global.current.value.dark);
 
 const expenses = ref([]);
 const salary = ref(0);
@@ -16,6 +14,18 @@ const newProfile = ref('');
 const newItem = ref({ who: 'Joint', name: '', amount: '', category: 'Spending' });
 const editingId = ref(null);
 const editForm = ref({});
+const search = ref('');
+
+// Dynamic Columns
+const columns = ref([
+    { key: 'who', label: 'Who', align: 'left', width: '100px', sortable: true },
+    { key: 'name', label: 'Item', align: 'left', width: '', sortable: true },
+    { key: 'amount', label: 'Amount', align: 'right', width: '120px', sortable: true },
+    { key: 'category', label: 'Category', align: 'left', width: '140px', sortable: true },
+    { key: 'actions', label: '', align: 'end', width: '80px', sortable: false }
+]);
+const sortKey = ref('amount');
+const sortOrder = ref(1);
 
 const fetchSandbox = async () => {
     const res = await axios.get(`${API_URL}/sandbox`);
@@ -36,9 +46,24 @@ const saveProfile = async () => { if(!newProfile.value) return; await axios.post
 const loadProfile = async (id) => { if(confirm("Load?")) { const res = await axios.post(`${API_URL}/sandbox/profiles/${id}/load`); salary.value = res.data.salary; fetchSandbox(); }};
 const deleteProfile = async (id) => { if(confirm("Delete?")) { await axios.delete(`${API_URL}/sandbox/profiles/${id}`); fetchSandbox(); }};
 const startEdit = (i) => { editingId.value = i.id; editForm.value = {...i}; };
+const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
 
 const total = computed(() => expenses.value.reduce((a,c) => a + c.amount, 0));
-const remaining = computed(() => salary.value + total.value); // Expenses stored as negative? No, usually positive in amount but logically negative. Let's assume expenses are negative or handled via math. Based on App.vue: "Income - Total".
+const remaining = computed(() => salary.value + total.value); // Logic assumption: expenses stored negative or this calc is just income+expenses? Assuming standard positive amounts for bills, usually income - expenses. If API returns positive expenses, use subtraction. 
+// Correcting logic based on "BudgetTab" which reduces amount (usually negative in DB or positive on UI? Let's check BudgetTab... "balance + leftToPay". Usually bills are negative.
+// If sandbox input is positive: "Result" calculation needs subtraction.
+// Let's assume input is positive amounts for bills.
+const calculatedResult = computed(() => salary.value - expenses.value.reduce((a,c) => a + Number(c.amount), 0));
+
+const filteredExpenses = computed(() => {
+    let items = expenses.value;
+    if (search.value) items = items.filter(i => i.name.toLowerCase().includes(search.value.toLowerCase()));
+    return [...items].sort((a, b) => {
+        let vA = a[sortKey.value], vB = b[sortKey.value];
+        if (typeof vA === 'string') { vA = vA.toLowerCase(); vB = vB.toLowerCase(); }
+        return (vA < vB ? -1 : vA > vB ? 1 : 0) * sortOrder.value;
+    });
+});
 
 onMounted(fetchSandbox);
 </script>
@@ -56,7 +81,7 @@ onMounted(fetchSandbox);
 
         <v-row class="mb-4">
             <v-col cols="6"><v-card class="pa-4"><div class="text-overline">Income</div><v-text-field v-model.number="salary" prefix="£" variant="underlined" class="text-h5 font-weight-bold"></v-text-field></v-card></v-col>
-            <v-col cols="6"><v-card class="pa-4" :color="remaining < 0 ? 'red-lighten-5' : 'green-lighten-5'"><div class="text-overline">Result</div><div class="text-h5 font-weight-black">£{{ remaining.toFixed(2) }}</div></v-card></v-col>
+            <v-col cols="6"><v-card class="pa-4" :color="calculatedResult < 0 ? 'red-lighten-5' : 'green-lighten-5'"><div class="text-overline">Result</div><div class="text-h5 font-weight-black">£{{ calculatedResult.toFixed(2) }}</div></v-card></v-col>
         </v-row>
 
         <v-card>
@@ -69,23 +94,45 @@ onMounted(fetchSandbox);
                     <v-col cols="2"><v-btn block color="deep-purple" @click="addItem">Add</v-btn></v-col>
                 </v-row>
             </v-card-text>
+            <div class="d-flex justify-end px-4 py-2"><v-text-field v-model="search" label="Search" density="compact" variant="plain" hide-details prepend-inner-icon="mdi-magnify" style="max-width: 200px"></v-text-field></div>
             <v-table>
-                <thead><tr><th>Who</th><th>Name</th><th class="text-end">Amount</th><th>Category</th><th class="text-end"></th></tr></thead>
+                <thead>
+                    <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
+                        <template #item="{ element: col }">
+                            <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header">
+                                <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}">
+                                    <v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon>
+                                    <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
+                                        {{ col.label }}
+                                        <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
+                                    </span>
+                                </div>
+                            </th>
+                        </template>
+                    </draggable>
+                </thead>
                 <tbody>
-                    <tr v-for="ex in expenses" :key="ex.id">
-                        <td><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined"></v-select><span v-else>{{ex.who}}</span></td>
-                        <td><v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined"></v-text-field><span v-else>{{ex.name}}</span></td>
-                        <td class="text-end"><v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined"></v-text-field><span v-else>£{{ex.amount.toFixed(2)}}</span></td>
-                        <td><v-select v-if="editingId===ex.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined"></v-select><span v-else>{{ex.category}}</span></td>
-                        <td class="text-end">
-                            <div v-if="editingId===ex.id"><v-btn icon="mdi-check" size="small" variant="text" color="green" @click="saveItem"></v-btn></div>
-                            <div v-else><v-btn icon="mdi-pencil" size="small" variant="text" color="grey" @click="startEdit(ex)"></v-btn><v-btn icon="mdi-delete" size="small" variant="text" color="grey" @click="deleteItem(ex.id)"></v-btn></div>
+                    <tr v-for="ex in filteredExpenses" :key="ex.id">
+                        <td v-for="col in columns" :key="col.key" :class="'text-'+col.align">
+                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined"></v-select><span v-else>{{ex.who}}</span></div>
+                            <div v-else-if="col.key === 'name'"><v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined"></v-text-field><span v-else>{{ex.name}}</span></div>
+                            <div v-else-if="col.key === 'amount'"><v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined"></v-text-field><span v-else>£{{ex.amount.toFixed(2)}}</span></div>
+                            <div v-else-if="col.key === 'category'"><v-select v-if="editingId===ex.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined"></v-select><span v-else>{{ex.category}}</span></div>
+                            <div v-else-if="col.key === 'actions'">
+                                <div v-if="editingId===ex.id"><v-btn icon="mdi-check" size="small" variant="text" color="green" @click="saveItem"></v-btn></div>
+                                <div v-else><v-btn icon="mdi-pencil" size="small" variant="text" color="grey" @click="startEdit(ex)"></v-btn><v-btn icon="mdi-delete" size="small" variant="text" color="grey" @click="deleteItem(ex.id)"></v-btn></div>
+                            </div>
                         </td>
                     </tr>
-                    <tr class="font-weight-bold bg-grey-lighten-4"><td colspan="2">TOTAL</td><td class="text-end text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
+                    <tr class="font-weight-bold bg-grey-lighten-4"><td colspan="2">TOTAL</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
                 </tbody>
             </v-table>
             <v-card-actions class="justify-end"><v-btn color="error" @click="clear">Clear All</v-btn></v-card-actions>
         </v-card>
     </div>
 </template>
+
+<style scoped>
+.cursor-move { cursor: move; }
+.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
+</style>

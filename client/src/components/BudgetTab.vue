@@ -22,25 +22,26 @@ const expenses = ref([]);
 const selectedExpenses = ref([]);
 const editingId = ref(null);
 const editForm = ref({});
+const search = ref(''); 
+
+// Standardized Columns - Reduced Actions width back to 60px
 const columns = ref([
   { key: 'select', label: '', width: '50px', align: 'center', sortable: false },
-  { key: 'status', label: 'Status', width: '60px', align: 'center', sortable: true },
+  { key: 'status', label: 'Status', width: '80px', align: 'center', sortable: true },
   { key: 'who', label: 'Who', width: '100px', align: 'left', sortable: true },
   { key: 'name', label: 'Bill Name', width: '', align: 'left', sortable: true },
   { key: 'amount', label: 'Amount', width: '120px', align: 'right', sortable: true },
   { key: 'category', label: 'Category', width: '140px', align: 'left', sortable: false },
-  { key: 'actions', label: 'Edit', width: '80px', align: 'end', sortable: false }
+  { key: 'actions', label: 'Edit', width: '60px', align: 'end', sortable: false }
 ]);
 const sortKey = ref('paid');
 const sortOrder = ref(1);
 const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing' });
 
-// --- PAY DATE CALCULATION (Working day before 20th) ---
+// --- PAY DATE CALCULATION ---
 const getPayDate = (year, month) => {
     let d = new Date(year, month, 20);
     const day = d.getDay(); 
-    // If 20th is Sun(0) -> Fri(18). If Sat(6) -> Fri(19). 
-    // If Mon(1) -> Fri(17) (Working day BEFORE). Else -> 19th.
     if (day === 0) d.setDate(18); 
     else if (day === 6) d.setDate(19); 
     else if (day === 1) d.setDate(17); 
@@ -51,22 +52,12 @@ const getPayDate = (year, month) => {
 const formattedMonth = computed(() => {
     if (!props.month) return { main: '', range: '' };
     const [y, m] = props.month.split('-').map(Number);
-    
-    // Logic: The "November" budget covers Nov 19 -> Dec 18
-    // Start: Payday of this month (m-1 in JS index)
-    // End: Payday of next month (m) - 1 day
-    
     const startDay = getPayDate(y, m - 1); 
     const endDayRef = getPayDate(y, m);
-    
     const startMonthName = new Date(y, m - 1).toLocaleString('default', { month: 'short' });
     const endMonthName = new Date(y, m).toLocaleString('default', { month: 'short' });
     const mainMonthName = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-
-    return {
-        main: mainMonthName,
-        range: `${startMonthName} ${startDay} - ${endMonthName} ${endDayRef - 1}`
-    };
+    return { main: mainMonthName, range: `${startMonthName} ${startDay} - ${endMonthName} ${endDayRef - 1}` };
 });
 
 // COMPUTED
@@ -81,8 +72,13 @@ const breakdownByWho = computed(() => {
     expenses.value.forEach(i => { if(!i.paid) g[i.who||'Joint'] = (g[i.who||'Joint'] || 0) + i.amount; });
     return g;
 });
-const sortedExpenses = computed(() => {
-    return [...expenses.value].sort((a, b) => {
+const filteredExpenses = computed(() => {
+    let items = expenses.value;
+    if (search.value) {
+        const s = search.value.toLowerCase();
+        items = items.filter(i => (i.name && i.name.toLowerCase().includes(s)) || (i.who && i.who.toLowerCase().includes(s)) || (i.category && i.category.toLowerCase().includes(s)));
+    }
+    return [...items].sort((a, b) => {
         let vA = a[sortKey.value], vB = b[sortKey.value];
         if (typeof vA === 'string') { vA = vA.toLowerCase(); vB = vB.toLowerCase(); }
         return (vA < vB ? -1 : vA > vB ? 1 : 0) * sortOrder.value;
@@ -97,51 +93,65 @@ const fetchData = async () => {
     expenses.value = res.data.expenses || [];
     selectedExpenses.value = [];
 };
-const updateBalance = async () => {
-    await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) });
-    emit('notify', 'Balance Saved');
-};
-const updateSalary = async () => {
-    await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) });
-    emit('notify', 'Salary Logged');
-};
+const updateBalance = async () => { await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) }); emit('notify', 'Balance Saved'); };
+const updateSalary = async () => { await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) }); emit('notify', 'Salary Logged'); };
 const changeMonth = (offset) => {
     const [y, m] = props.month.split('-').map(Number);
     const d = new Date(y, m - 1 + offset, 1);
-    const newM = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    emit('update:month', newM);
+    emit('update:month', `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
 };
 const initMonth = async (source) => {
     if(!confirm("Initialize month?")) return;
     const [y, m] = props.month.split('-').map(Number);
     const pd = new Date(y, m - 2, 1);
-    const prevM = `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}`;
-    await axios.post(`${API_URL}/month/init`, { month: props.month, source, previousMonth: prevM });
+    await axios.post(`${API_URL}/month/init`, { month: props.month, source, previousMonth: `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}` });
     fetchData();
 };
-const resetMonth = async () => {
-    if(confirm("Delete ALL data for this month?")) {
-        await axios.delete(`${API_URL}/month`, { params: { month: props.month } });
-        fetchData();
-    }
-};
+const resetMonth = async () => { if(confirm("Delete ALL data?")) { await axios.delete(`${API_URL}/month`, { params: { month: props.month } }); fetchData(); } };
 const addExpense = async () => {
     if(!newExpense.value.name || !newExpense.value.amount) return;
     await axios.post(`${API_URL}/expenses`, { ...newExpense.value, month: props.month, amount: parseFloat(newExpense.value.amount) });
-    newExpense.value.name = ''; newExpense.value.amount = '';
-    fetchData();
+    newExpense.value.name = ''; newExpense.value.amount = ''; fetchData();
 };
 const togglePaid = async (item) => {
     item.paid = !item.paid;
+    item.paid_at = item.paid ? new Date().toISOString() : null;
     await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid });
 };
-const saveExpense = async () => {
-    await axios.put(`${API_URL}/expenses/${editForm.value.id}`, editForm.value);
-    editingId.value = null; fetchData();
-};
-const getChipColor = (who) => ({ 'Joint': 'orange', 'f1': 'blue', 'f2': 'cyan', 's': 'green', 'Matt': 'deep-purple' }[who] || 'grey');
+const saveExpense = async () => { await axios.put(`${API_URL}/expenses/${editForm.value.id}`, editForm.value); editingId.value = null; fetchData(); };
 const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
 const startEdit = (item) => { editingId.value = item.id; editForm.value = {...item}; };
+
+// --- NEW BULK DELETE ---
+const deleteSelected = async () => {
+    if(!selectedExpenses.value.length) return;
+    if(!confirm(`Delete ${selectedExpenses.value.length} items?`)) return;
+    try {
+        await Promise.all(selectedExpenses.value.map(id => axios.delete(`${API_URL}/expenses/${id}`)));
+        selectedExpenses.value = [];
+        fetchData();
+        emit('notify', 'Items deleted');
+    } catch (e) { console.error(e); }
+};
+
+// --- STYLING HELPERS ---
+const getStringHue = (str) => {
+    let hash = 0;
+    if(!str) return 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    return Math.abs(hash % 360);
+};
+const getRowStyle = (ex) => {
+    const style = { transition: 'background-color 0.2s ease' };
+    if (editingId.value === ex.id) { style.backgroundColor = isDark.value ? '#424242' : '#FFF8E1'; return style; } 
+    const hue = getStringHue(ex.who || 'Joint');
+    if (isDark.value) { style.backgroundColor = `hsl(${hue}, 50%, 15%)`; style.color = 'rgba(255,255,255,0.9)'; } 
+    else { style.backgroundColor = `hsl(${hue}, 70%, 96%)`; style.color = 'rgba(0,0,0,0.87)'; }
+    if (ex.paid) { style.opacity = 0.5; style.textDecoration = 'line-through'; }
+    return style;
+};
+const getChipColor = (who) => `hsl(${getStringHue(who || 'Joint')}, 70%, 40%)`;
+const formatDateTime = (iso) => iso ? new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '';
 
 watch(() => props.month, fetchData);
 onMounted(fetchData);
@@ -174,42 +184,53 @@ onMounted(fetchData);
                 <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center"><div class="text-subtitle-1 text-medium-emphasis">Salary</div><v-text-field v-model.number="salary" prefix="£" variant="underlined" class="text-h4 font-weight-bold centered-input" @keydown.enter="updateSalary" append-inner-icon="mdi-content-save" @click:append-inner="updateSalary"></v-text-field></v-card></v-col>
                 <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center" :color="balance < 0 ? 'red-lighten-5' : undefined"><div class="text-subtitle-1 text-medium-emphasis">Balance</div><v-text-field v-model.number="balance" prefix="£" variant="underlined" class="text-h4 font-weight-black centered-input" @keydown.enter="updateBalance" append-inner-icon="mdi-content-save" @click:append-inner="updateBalance"></v-text-field></v-card></v-col>
                 <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center" :color="projectedBalance < 0 ? 'red-lighten-5' : undefined"><div class="text-subtitle-1 text-medium-emphasis">Projected</div><div class="text-h4 font-weight-black">£{{ projectedBalance.toFixed(2) }}</div><v-progress-linear v-model="progressPercentage" height="6" rounded class="mt-4" striped :color="projectedBalance < 0 ? 'red' : 'green'"></v-progress-linear></v-card></v-col>
-                <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5"><div class="text-subtitle-1 text-medium-emphasis mb-2">Unpaid Split</div><div v-for="(amt, p) in breakdownByWho" :key="p" class="d-flex justify-space-between border-b py-1"><v-chip size="x-small" :color="getChipColor(p)" class="text-uppercase font-weight-bold">{{p}}</v-chip><span class="font-monospace text-red">£{{amt.toFixed(2)}}</span></div></v-card></v-col>
+                <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5"><div class="text-subtitle-1 text-medium-emphasis mb-2">Unpaid Split</div><div v-for="(amt, p) in breakdownByWho" :key="p" class="d-flex justify-space-between border-b py-1"><span class="text-uppercase font-weight-bold" :style="{ color: getChipColor(p) }">{{p}}</span><span class="font-monospace text-red">£{{amt.toFixed(2)}}</span></div></v-card></v-col>
             </v-row>
 
             <v-card class="rounded-lg" elevation="3">
-                <v-card-text class="pa-4 bg-background">
-                    <v-row dense align="center">
-                        <v-col style="width: 50px"></v-col>
-                        <v-col v-for="col in columns" :key="col.key" :style="{width: col.width, flex: '0 0 auto'}">
-                            <span v-if="col.key === 'status'"><v-icon icon="mdi-plus" color="primary" class="ml-4"></v-icon></span>
-                            <v-select v-else-if="col.key === 'who'" v-model="newExpense.who" :items="people" density="compact" variant="plain" hide-details></v-select>
-                            <v-text-field v-else-if="col.key === 'name'" v-model="newExpense.name" density="comfortable" variant="solo" hide-details></v-text-field>
-                            <v-text-field v-else-if="col.key === 'amount'" v-model="newExpense.amount" type="number" prefix="£" density="comfortable" variant="solo" hide-details></v-text-field>
-                            <v-select v-else-if="col.key === 'category'" v-model="newExpense.category" :items="categories" density="compact" variant="plain" hide-details></v-select>
-                            <v-btn v-else-if="col.key === 'actions'" color="primary" @click="addExpense">Add</v-btn>
-                        </v-col>
+                <v-card-text class="pa-4 bg-surface">
+                    <v-row dense>
+                        <v-col cols="3"><v-select v-model="newExpense.who" :items="people" density="compact" variant="solo" hide-details label="Who"></v-select></v-col>
+                        <v-col cols="3"><v-text-field v-model="newExpense.name" density="compact" variant="solo" hide-details label="Bill Name"></v-text-field></v-col>
+                        <v-col cols="2"><v-text-field v-model="newExpense.amount" type="number" prefix="£" density="compact" variant="solo" hide-details label="Amount"></v-text-field></v-col>
+                        <v-col cols="2"><v-select v-model="newExpense.category" :items="categories" density="compact" variant="solo" hide-details label="Category"></v-select></v-col>
+                        <v-col cols="2"><v-btn block color="primary" @click="addExpense" height="40">Add</v-btn></v-col>
                     </v-row>
                 </v-card-text>
+                <div class="d-flex justify-end px-4 py-2"><v-text-field v-model="search" prepend-inner-icon="mdi-magnify" label="Search" single-line hide-details density="compact" variant="plain" style="max-width: 200px"></v-text-field></div>
                 <v-divider></v-divider>
-                <v-table hover>
+                <v-table hover density="comfortable">
                     <thead>
-                        <draggable v-model="columns" tag="tr" item-key="key">
-                            <template #item="{ element: col }"><th :class="'text-'+col.align" :style="{width: col.width}" @click="col.sortable && sortBy(col.key)">{{ col.label }} <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon></th></template>
+                        <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
+                            <template #item="{ element: col }">
+                                <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header">
+                                    <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}">
+                                        <v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon>
+                                        <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
+                                            {{ col.label }} <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
+                                        </span>
+                                    </div>
+                                </th>
+                            </template>
                         </draggable>
                     </thead>
                     <tbody>
-                        <tr v-for="ex in sortedExpenses" :key="ex.id" :class="{'bg-green-lighten-5': !isDark && ex.paid, 'text-medium-emphasis': ex.paid, 'bg-amber-lighten-5': editingId===ex.id && !isDark, 'bg-grey-darken-3': editingId===ex.id && isDark}">
+                        <tr v-for="ex in filteredExpenses" :key="ex.id" :style="getRowStyle(ex)">
                             <td v-for="col in columns" :key="col.key" :class="'text-'+col.align">
                                 <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedExpenses" :value="ex.id" density="compact" hide-details></v-checkbox-btn>
-                                <v-btn v-else-if="col.key === 'status'" :icon="ex.paid ? 'mdi-check-bold' : 'mdi-circle-outline'" :color="ex.paid?'green':'grey'" variant="text" size="small" @click="togglePaid(ex)"></v-btn>
+                                <div v-else-if="col.key === 'status'" class="d-flex justify-center">
+                                    <v-tooltip v-if="ex.paid && ex.paid_at" location="top" :text="'Paid: ' + formatDateTime(ex.paid_at)">
+                                        <template v-slot:activator="{ props }"><v-btn v-bind="props" :icon="'mdi-check-bold'" color="green" variant="text" size="small" @click="togglePaid(ex)"></v-btn></template>
+                                    </v-tooltip>
+                                    <v-btn v-else :icon="ex.paid ? 'mdi-check-bold' : 'mdi-circle-outline'" :color="ex.paid?'green':'grey'" variant="text" size="small" @click="togglePaid(ex)"></v-btn>
+                                </div>
                                 <div v-else-if="col.key === 'who'">
                                     <v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined" hide-details></v-select>
-                                    <v-chip v-else :color="getChipColor(ex.who)" size="small" label class="text-uppercase font-weight-bold">{{ex.who}}</v-chip>
+                                    <v-chip v-else :color="getChipColor(ex.who)" size="small" label class="text-uppercase font-weight-bold" variant="flat" style="color: white !important">{{ex.who}}</v-chip>
                                 </div>
                                 <div v-else-if="col.key === 'name'">
                                     <v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined" hide-details></v-text-field>
-                                    <span v-else :class="{'text-decoration-line-through': ex.paid}">{{ex.name}}</span>
+                                    <span v-else>{{ex.name}}</span>
                                 </div>
                                 <div v-else-if="col.key === 'amount'">
                                     <v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined" hide-details type="number"></v-text-field>
@@ -221,7 +242,7 @@ onMounted(fetchData);
                                 </div>
                                 <div v-else-if="col.key === 'actions'">
                                     <div v-if="editingId===ex.id"><v-btn icon="mdi-check" color="green" size="small" variant="text" @click="saveExpense"></v-btn><v-btn icon="mdi-close" color="red" size="small" variant="text" @click="editingId=null"></v-btn></div>
-                                    <v-btn v-else icon="mdi-pencil" color="grey" variant="text" size="small" @click="startEdit(ex)"></v-btn>
+                                    <v-btn v-else icon="mdi-pencil" color="medium-emphasis" variant="text" size="small" @click="startEdit(ex)"></v-btn>
                                 </div>
                             </td>
                         </tr>
@@ -232,6 +253,7 @@ onMounted(fetchData);
             <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-inverse-surface d-flex align-center justify-center" style="z-index: 100; max-width: 400px; margin: 0 auto 20px auto !important;">
                 <span class="font-weight-bold mr-4">{{selectedExpenses.length}} Selected</span>
                 <span class="text-h6 font-weight-black mr-4">£{{selectedTotal.toFixed(2)}}</span>
+                <v-btn icon="mdi-delete" color="error" variant="text" class="mr-2" @click="deleteSelected"></v-btn>
                 <v-btn icon="mdi-close" size="small" variant="text" @click="selectedExpenses = []"></v-btn>
             </v-card>
         </div>
@@ -241,4 +263,6 @@ onMounted(fetchData);
 <style scoped>
 .centered-input :deep(input) { text-align: center; }
 .font-monospace { font-family: 'Roboto Mono', monospace; }
+.cursor-move { cursor: move; }
+.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
 </style>

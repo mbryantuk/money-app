@@ -86,8 +86,18 @@ app.delete('/api/templates/:id', (req, res) => db.run("DELETE FROM expense_templ
 
 // --- EXPENSES ---
 app.post('/api/expenses', (req, res) => { const { name, amount, category, who, month } = req.body; db.run("INSERT INTO expenses (name, amount, category, who, month, paid) VALUES (?, ?, ?, ?, ?, 0)", [name, amount, category, who, month], function() { res.json({ id: this.lastID }); });});
-app.post('/api/expenses/:id/toggle', (req, res) => { const { paid } = req.body; db.run("UPDATE expenses SET paid = ? WHERE id = ?", [paid ? 1 : 0, req.params.id], () => res.json({ success: true }));});
+
+// Toggle Paid Status & Timestamp
+app.post('/api/expenses/:id/toggle', (req, res) => { 
+    const { paid } = req.body;
+    const paidAt = paid ? new Date().toISOString() : null; 
+    db.run("UPDATE expenses SET paid = ?, paid_at = ? WHERE id = ?", [paid ? 1 : 0, paidAt, req.params.id], () => res.json({ success: true }));
+});
+
 app.put('/api/expenses/:id', (req, res) => { const { name, amount, category, who } = req.body; db.run("UPDATE expenses SET name = ?, amount = ?, category = ?, who = ? WHERE id = ?", [name, amount, category, who, req.params.id], () => res.json({ success: true }));});
+
+// NEW: Delete Expense Endpoint
+app.delete('/api/expenses/:id', (req, res) => db.run("DELETE FROM expenses WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
 // --- MONTH MGMT ---
 app.post('/api/month/init', (req, res) => {
@@ -121,7 +131,7 @@ app.post('/api/mortgage', (req, res) => {
     db.run("INSERT INTO settings (key, value) VALUES ('mortgage_data', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [JSON.stringify(req.body)], () => res.json({ success: true }));
 });
 
-// --- DASHBOARD (FIXED: Uses ABS() for positive numbers) ---
+// --- DASHBOARD ---
 app.get('/api/dashboard', (req, res) => {
     const startYear = parseInt(req.query.year);
     if (!startYear) return res.status(400).json({ error: "Year required" });
@@ -255,17 +265,8 @@ app.get('/api/christmas', (req, res) => db.all("SELECT * FROM christmas_list", (
 app.post('/api/christmas', (req, res) => { const { recipient, item, amount } = req.body; db.run("INSERT INTO christmas_list (recipient, item, amount, bought) VALUES (?, ?, ?, 0)", [recipient, item, amount], function() { res.json({ id: this.lastID }); });});
 app.put('/api/christmas/:id', (req, res) => { const { recipient, item, amount } = req.body; db.run("UPDATE christmas_list SET recipient=?, item=?, amount=? WHERE id=?", [recipient, item, amount, req.params.id], () => res.json({ success: true }));});
 app.post('/api/christmas/:id/toggle', (req, res) => { const { bought } = req.body; db.run("UPDATE christmas_list SET bought=? WHERE id=?", [bought ? 1 : 0, req.params.id], () => res.json({ success: true }));});
-// FIXED: Added missing closing parenthesis ')' at the end of this line
 app.delete('/api/christmas/:id', (req, res) => db.run("DELETE FROM christmas_list WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
-// --- API 404 FALLBACK (Prevents serving HTML for invalid API calls) ---
-// UPDATED: Use '/api' prefix to handle any route starting with /api
-app.use('/api', (req, res) => {
-    res.status(404).json({ error: `API Endpoint not found: ${req.originalUrl}` });
-});
-
-// --- SERVE ---
 app.use(express.static(path.join(__dirname, '../client/dist')));
 app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, '../client/dist', 'index.html')));
-
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
