@@ -8,7 +8,8 @@ const props = defineProps({
   month: String,
   people: Array,
   categories: Array,
-  defaultSalary: Number
+  defaultSalary: Number,
+  payDay: { type: Number, default: 19 } // NEW PROP
 });
 const emit = defineEmits(['update:month', 'notify']);
 const API_URL = '/api';
@@ -24,7 +25,7 @@ const editingId = ref(null);
 const editForm = ref({});
 const search = ref(''); 
 
-// Standardized Columns - Reduced Actions width back to 60px
+// Standardized Columns
 const columns = ref([
   { key: 'select', label: '', width: '50px', align: 'center', sortable: false },
   { key: 'status', label: 'Status', width: '80px', align: 'center', sortable: true },
@@ -38,26 +39,39 @@ const sortKey = ref('paid');
 const sortOrder = ref(1);
 const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing' });
 
-// --- PAY DATE CALCULATION ---
+// --- PAY DATE CALCULATION (Dynamic from Prop) ---
 const getPayDate = (year, month) => {
-    let d = new Date(year, month, 20);
+    let d = new Date(year, month, props.payDay); // Use prop
     const day = d.getDay(); 
-    if (day === 0) d.setDate(18); 
-    else if (day === 6) d.setDate(19); 
-    else if (day === 1) d.setDate(17); 
-    else d.setDate(19); 
+    if (day === 0) d.setDate(d.getDate() - 2); 
+    else if (day === 6) d.setDate(d.getDate() - 1); 
     return d.getDate();
 };
 
 const formattedMonth = computed(() => {
-    if (!props.month) return { main: '', range: '' };
+    if (!props.month) return { main: '', range: '', days: 0 };
     const [y, m] = props.month.split('-').map(Number);
-    const startDay = getPayDate(y, m - 1); 
-    const endDayRef = getPayDate(y, m);
-    const startMonthName = new Date(y, m - 1).toLocaleString('default', { month: 'short' });
-    const endMonthName = new Date(y, m).toLocaleString('default', { month: 'short' });
-    const mainMonthName = new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-    return { main: mainMonthName, range: `${startMonthName} ${startDay} - ${endMonthName} ${endDayRef - 1}` };
+    
+    // Logic: Month 'm' spans from Payday(m-1) to Payday(m) - 1 day
+    const startDayVal = getPayDate(y, m - 1); 
+    const startDate = new Date(y, m - 1, startDayVal);
+    
+    const endDayVal = getPayDate(y, m);
+    const endDate = new Date(y, m, endDayVal); 
+    
+    // Duration in days
+    const diffTime = Math.abs(endDate - startDate);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+
+    const startMonthName = startDate.toLocaleString('default', { month: 'short' });
+    const endMonthName = endDate.toLocaleString('default', { month: 'short' });
+    const mainMonthName = startDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+    return {
+        main: mainMonthName,
+        range: `${startMonthName} ${startDayVal} - ${endMonthName} ${endDayVal - 1}`,
+        days: diffDays
+    };
 });
 
 // COMPUTED
@@ -119,28 +133,19 @@ const togglePaid = async (item) => {
     await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid });
 };
 const saveExpense = async () => { await axios.put(`${API_URL}/expenses/${editForm.value.id}`, editForm.value); editingId.value = null; fetchData(); };
-const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
-const startEdit = (item) => { editingId.value = item.id; editForm.value = {...item}; };
-
-// --- NEW BULK DELETE ---
 const deleteSelected = async () => {
     if(!selectedExpenses.value.length) return;
     if(!confirm(`Delete ${selectedExpenses.value.length} items?`)) return;
     try {
         await Promise.all(selectedExpenses.value.map(id => axios.delete(`${API_URL}/expenses/${id}`)));
-        selectedExpenses.value = [];
-        fetchData();
-        emit('notify', 'Items deleted');
+        selectedExpenses.value = []; fetchData(); emit('notify', 'Items deleted');
     } catch (e) { console.error(e); }
 };
+const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
+const startEdit = (item) => { editingId.value = item.id; editForm.value = {...item}; };
 
-// --- STYLING HELPERS ---
-const getStringHue = (str) => {
-    let hash = 0;
-    if(!str) return 0;
-    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    return Math.abs(hash % 360);
-};
+// --- HELPERS ---
+const getStringHue = (str) => { let hash = 0; if(!str) return 0; for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash); return Math.abs(hash % 360); };
 const getRowStyle = (ex) => {
     const style = { transition: 'background-color 0.2s ease' };
     if (editingId.value === ex.id) { style.backgroundColor = isDark.value ? '#424242' : '#FFF8E1'; return style; } 
@@ -166,12 +171,15 @@ onMounted(fetchData);
                     <v-btn icon="mdi-chevron-left" @click="changeMonth(-1)" variant="text" size="large" color="primary"></v-btn>
                     <div>
                         <h2 class="text-h5 font-weight-bold text-primary mb-0" style="line-height: 1.2">{{ formattedMonth.main }}</h2>
-                        <div class="text-caption text-medium-emphasis font-weight-bold">{{ formattedMonth.range }}</div>
+                        <div class="text-caption text-medium-emphasis font-weight-bold">{{ formattedMonth.range }} ({{ formattedMonth.days }} Days)</div>
                     </div>
                     <v-btn icon="mdi-chevron-right" @click="changeMonth(1)" variant="text" size="large" color="primary"></v-btn>
                 </div>
                 <div style="width: 40px"><v-btn v-if="expenses.length" icon="mdi-delete-sweep-outline" color="red-lighten-1" variant="text" @click="resetMonth"></v-btn></div>
             </div>
+            <v-alert v-if="formattedMonth.days >= 33" density="compact" type="warning" variant="tonal" class="ma-2 text-caption font-weight-bold" icon="mdi-clock-alert-outline">
+                Long Month! {{ formattedMonth.days }} days between paydays.
+            </v-alert>
         </v-card>
 
         <v-alert v-if="!expenses.length" type="info" variant="tonal" class="mb-6 rounded-lg">

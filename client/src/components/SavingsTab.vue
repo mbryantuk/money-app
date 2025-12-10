@@ -1,9 +1,12 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import axios from 'axios';
+import { useTheme } from 'vuetify';
 
 const emit = defineEmits(['notify']);
 const API_URL = '/api';
+const theme = useTheme();
+const isDark = computed(() => theme.global.current.value.dark);
 
 const accounts = ref([]);
 const newAccountName = ref('');
@@ -53,7 +56,7 @@ onMounted(fetchSavings);
         <v-row>
             <v-col v-for="acc in accounts" :key="acc.id" cols="12" md="6">
                 <v-card class="rounded-lg h-100">
-                    <v-card-title class="d-flex justify-space-between bg-grey-lighten-4 pa-4">
+                    <v-card-title class="d-flex justify-space-between pa-4" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'">
                         <span class="font-weight-bold">{{ acc.name }}</span>
                         <span class="text-green font-weight-black">£{{ acc.total.toFixed(2) }}</span>
                     </v-card-title>

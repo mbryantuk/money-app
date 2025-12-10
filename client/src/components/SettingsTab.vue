@@ -3,8 +3,14 @@ import { ref, computed } from 'vue';
 import axios from 'axios';
 import draggable from 'vuedraggable';
 
-const props = defineProps({ people: Array, categories: Array, defaultSalary: Number, templates: Array });
-const emit = defineEmits(['notify', 'refresh', 'update:people', 'update:categories', 'update:default-salary']);
+const props = defineProps({ 
+    people: Array, 
+    categories: Array, 
+    defaultSalary: Number, 
+    payDay: Number, // NEW PROP
+    templates: Array 
+});
+const emit = defineEmits(['notify', 'refresh', 'update:people', 'update:categories', 'update:default-salary', 'update:pay-day']);
 const API_URL = '/api';
 
 const renameForm = ref({ type: 'people', oldName: null, newName: '' });
@@ -26,6 +32,9 @@ const sortOrder = ref(1);
 
 const saveSetting = async (key, val) => { await axios.post(`${API_URL}/settings`, { key, value: JSON.stringify(val) }); emit('notify', 'Saved'); };
 const saveSalary = async () => { await axios.post(`${API_URL}/settings`, { key: 'default_salary', value: props.defaultSalary }); emit('notify', 'Salary Saved'); };
+// NEW: Save Pay Day
+const savePayDay = async () => { await axios.post(`${API_URL}/settings`, { key: 'pay_day', value: props.payDay }); emit('notify', 'Pay Day Saved'); };
+
 const performRename = async () => { if(confirm("Rename?")) { await axios.post(`${API_URL}/settings/rename`, renameForm.value); emit('refresh'); emit('notify', 'Renamed'); } };
 const addTemplate = async () => { if(!newTemplate.value.name) return; await axios.post(`${API_URL}/templates`, newTemplate.value); newTemplate.value = {}; emit('refresh'); };
 const saveTemplate = async () => { await axios.put(`${API_URL}/templates/${editForm.value.id}`, editForm.value); editingId.value = null; emit('refresh'); };
@@ -57,8 +66,9 @@ const filteredTemplates = computed(() => {
                 <v-btn block color="primary" @click="performRename">Rename</v-btn>
             </v-card>
             <v-card class="mb-4 pa-4">
-                <h3 class="text-h6 mb-2">Default Salary</h3>
-                <v-text-field v-model="props.defaultSalary" @change="saveSalary" prefix="£" variant="outlined"></v-text-field>
+                <h3 class="text-h6 mb-2">Financial Defaults</h3>
+                <v-text-field v-model="props.defaultSalary" @change="saveSalary" label="Default Salary" prefix="£" variant="outlined" class="mb-2"></v-text-field>
+                <v-text-field v-model="props.payDay" @change="savePayDay" label="Pay Day (Date)" type="number" min="1" max="31" suffix="th" variant="outlined"></v-text-field>
             </v-card>
             <v-card class="pa-4">
                 <h3 class="text-h6 mb-2">Lists</h3>

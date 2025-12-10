@@ -2,10 +2,13 @@
 import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import draggable from 'vuedraggable';
+import { useTheme } from 'vuetify';
 
 const props = defineProps({ people: Array, categories: Array, currentMonth: String });
 const emit = defineEmits(['notify']);
 const API_URL = '/api';
+const theme = useTheme();
+const isDark = computed(() => theme.global.current.value.dark);
 
 const expenses = ref([]);
 const salary = ref(0);
@@ -49,10 +52,6 @@ const startEdit = (i) => { editingId.value = i.id; editForm.value = {...i}; };
 const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
 
 const total = computed(() => expenses.value.reduce((a,c) => a + c.amount, 0));
-const remaining = computed(() => salary.value + total.value); // Logic assumption: expenses stored negative or this calc is just income+expenses? Assuming standard positive amounts for bills, usually income - expenses. If API returns positive expenses, use subtraction. 
-// Correcting logic based on "BudgetTab" which reduces amount (usually negative in DB or positive on UI? Let's check BudgetTab... "balance + leftToPay". Usually bills are negative.
-// If sandbox input is positive: "Result" calculation needs subtraction.
-// Let's assume input is positive amounts for bills.
 const calculatedResult = computed(() => salary.value - expenses.value.reduce((a,c) => a + Number(c.amount), 0));
 
 const filteredExpenses = computed(() => {
@@ -81,7 +80,11 @@ onMounted(fetchSandbox);
 
         <v-row class="mb-4">
             <v-col cols="6"><v-card class="pa-4"><div class="text-overline">Income</div><v-text-field v-model.number="salary" prefix="£" variant="underlined" class="text-h5 font-weight-bold"></v-text-field></v-card></v-col>
-            <v-col cols="6"><v-card class="pa-4" :color="calculatedResult < 0 ? 'red-lighten-5' : 'green-lighten-5'"><div class="text-overline">Result</div><div class="text-h5 font-weight-black">£{{ calculatedResult.toFixed(2) }}</div></v-card></v-col>
+            <v-col cols="6">
+                <v-card class="pa-4" :color="calculatedResult < 0 ? (isDark ? 'red-darken-4' : 'red-lighten-5') : (isDark ? 'green-darken-4' : 'green-lighten-5')">
+                    <div class="text-overline">Result</div><div class="text-h5 font-weight-black">£{{ calculatedResult.toFixed(2) }}</div>
+                </v-card>
+            </v-col>
         </v-row>
 
         <v-card>
@@ -100,13 +103,7 @@ onMounted(fetchSandbox);
                     <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
                         <template #item="{ element: col }">
                             <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header">
-                                <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}">
-                                    <v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon>
-                                    <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
-                                        {{ col.label }}
-                                        <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
-                                    </span>
-                                </div>
+                                <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}"><v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon><span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">{{ col.label }}<v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon></span></div>
                             </th>
                         </template>
                     </draggable>
@@ -124,7 +121,7 @@ onMounted(fetchSandbox);
                             </div>
                         </td>
                     </tr>
-                    <tr class="font-weight-bold bg-grey-lighten-4"><td colspan="2">TOTAL</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
+                    <tr class="font-weight-bold" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'"><td colspan="2">TOTAL</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
                 </tbody>
             </v-table>
             <v-card-actions class="justify-end"><v-btn color="error" @click="clear">Clear All</v-btn></v-card-actions>

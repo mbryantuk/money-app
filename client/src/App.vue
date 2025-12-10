@@ -32,11 +32,12 @@ const tab = ref('dashboard');
 const showCalculator = ref(false);
 const snackbar = ref(false);
 const snackbarText = ref('');
-const openList = ref([]); // State for open menus
+const openList = ref([]); 
 
 // GLOBAL DATA STATE
 const currentMonth = ref(''); 
 const defaultSalary = ref(0);
+const payDay = ref(19); // Default to 19
 const availableCategories = ref([]);
 const availablePeople = ref([]);
 const templates = ref([]);
@@ -52,12 +53,14 @@ const toggleTheme = () => theme.global.name.value = isDark.value ? 'light' : 'da
 
 // --- FINANCIAL MONTH LOGIC ---
 const getPayDate = (year, month) => {
-    let d = new Date(year, month, 20);
+    // Use the configurable payDay value
+    let d = new Date(year, month, payDay.value);
     const day = d.getDay(); 
-    if (day === 0) d.setDate(18); 
-    else if (day === 6) d.setDate(19); 
-    else if (day === 1) d.setDate(17); 
-    else d.setDate(19); 
+    
+    // Weekend Adjustment (Sun->Fri, Sat->Fri)
+    if (day === 0) d.setDate(d.getDate() - 2); 
+    else if (day === 6) d.setDate(d.getDate() - 1); 
+
     return d.getDate();
 };
 
@@ -66,8 +69,10 @@ const determineCurrentFinancialMonth = () => {
     const y = today.getFullYear();
     const m = today.getMonth(); 
     const d = today.getDate();
+    
     const payDayThisMonth = getPayDate(y, m);
 
+    // If today is BEFORE payday, we are in the previous month's budget
     if (d < payDayThisMonth) {
         const prevDate = new Date(y, m - 1, 1);
         currentMonth.value = prevDate.toISOString().slice(0, 7);
@@ -81,6 +86,7 @@ const fetchSettings = async () => {
   try {
     const res = await axios.get(`${API_URL}/settings`);
     if (res.data.default_salary) defaultSalary.value = parseFloat(res.data.default_salary);
+    if (res.data.pay_day) payDay.value = parseInt(res.data.pay_day); // Load Pay Day
     
     if (res.data.categories) availableCategories.value = JSON.parse(res.data.categories);
     else availableCategories.value = ['Housing', 'Utilities', 'Food', 'Insurance', 'Subscription', 'Mobile', 'Savings', 'Spending', 'Medical', 'Tax'];
@@ -90,6 +96,9 @@ const fetchSettings = async () => {
 
     const tRes = await axios.get(`${API_URL}/templates`);
     templates.value = tRes.data || [];
+    
+    // Recalculate current month after fetching settings to ensure correct payday is used
+    determineCurrentFinancialMonth();
   } catch (e) { console.error("Settings Error", e); }
 };
 
@@ -131,7 +140,6 @@ const handleKeydown = (e) => {
 };
 
 onMounted(() => {
-    determineCurrentFinancialMonth();
     fetchSettings();
     window.addEventListener('keydown', handleKeydown);
 });
@@ -192,15 +200,11 @@ onUnmounted(() => {
                 <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('/')" class="h-100 text-h6">/</v-btn></v-col>
                 <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('*')" class="h-100 text-h6">x</v-btn></v-col>
                 <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('-')" class="h-100 text-h6">-</v-btn></v-col>
-                
                 <v-col cols="3" v-for="n in [7,8,9]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)" class="h-100 text-h6">{{n}}</v-btn></v-col>
                 <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('+')" class="h-100 text-h6">+</v-btn></v-col>
-                
                 <v-col cols="3" v-for="n in [4,5,6]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)" class="h-100 text-h6">{{n}}</v-btn></v-col>
                 <v-col cols="3"><v-btn block size="small" color="primary" @click="calcCompute" class="h-100 text-h6" style="grid-row: span 2">=</v-btn></v-col>
-                
                 <v-col cols="3" v-for="n in [1,2,3]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)" class="h-100 text-h6">{{n}}</v-btn></v-col>
-                
                 <v-col cols="9" class="d-flex">
                     <v-btn block size="small" variant="text" @click="calcAppend(0)" class="h-100 text-h6 flex-grow-1" style="width: 66%">0</v-btn>
                     <v-btn block size="small" variant="text" @click="calcAppend('.')" class="h-100 text-h6 flex-grow-1" style="width: 33%">.</v-btn>
@@ -211,41 +215,34 @@ onUnmounted(() => {
 
     <v-main :class="isDark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4'">
       <v-container class="py-6" fluid style="max-width: 1400px;">
-        
         <DashboardTab v-if="tab === 'dashboard'" />
-
         <BudgetTab v-if="tab === 'budget' && currentMonth" 
             v-model:month="currentMonth"
             :people="availablePeople"
             :categories="availableCategories"
             :default-salary="defaultSalary"
+            :pay-day="payDay" 
             @notify="showMsg"
         />
-
         <SavingsTab v-if="tab === 'savings'" @notify="showMsg" />
-
         <MortgageTab v-if="tab === 'mortgage'" @notify="showMsg" />
-
         <ChristmasTab v-if="tab === 'christmas'" @notify="showMsg" />
-
         <SandboxTab v-if="tab === 'sandbox'" 
             :people="availablePeople" 
             :categories="availableCategories" 
             :current-month="currentMonth"
             @notify="showMsg"
         />
-
         <AdminTab v-if="tab === 'admin'" @notify="showMsg" />
-
         <SettingsTab v-if="tab === 'settings'" 
             v-model:people="availablePeople"
             v-model:categories="availableCategories"
             v-model:default-salary="defaultSalary"
+            v-model:pay-day="payDay"
             :templates="templates"
             @notify="showMsg"
             @refresh="fetchSettings"
         />
-
       </v-container>
     </v-main>
 
@@ -255,20 +252,9 @@ onUnmounted(() => {
 
 <style scoped>
 .calculator-card { 
-    position: fixed; 
-    top: 70px; 
-    right: 20px; 
-    z-index: 2000;
-    
-    /* New Default Size */
-    width: 320px;
-    height: 480px;
-    min-width: 280px;
-    min-height: 400px;
-
-    /* Resizable Logic */
-    resize: both;
-    overflow: auto;
+    position: fixed; top: 70px; right: 20px; z-index: 2000;
+    width: 320px; height: 480px; min-width: 280px; min-height: 400px;
+    resize: both; overflow: auto;
 }
 .font-monospace { font-family: 'Roboto Mono', monospace; }
 </style>

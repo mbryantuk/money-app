@@ -2,14 +2,21 @@
 import { ref, onMounted, computed } from 'vue';
 import axios from 'axios';
 import draggable from 'vuedraggable';
+import { useTheme } from 'vuetify';
 
 const API_URL = '/api';
+const theme = useTheme();
+const isDark = computed(() => theme.global.current.value.dark);
 
 const list = ref([]);
 const newGift = ref({ recipient: '', item: '', amount: '' });
 const editingId = ref(null);
 const editForm = ref({});
 const search = ref('');
+
+// Savings Link State
+const pots = ref([]);
+const linkedPotId = ref(null);
 
 // Dynamic Columns
 const columns = ref([
@@ -22,7 +29,18 @@ const columns = ref([
 const sortKey = ref('recipient');
 const sortOrder = ref(1);
 
+// DATA FETCHING
 const fetchChristmas = async () => { const res = await axios.get(`${API_URL}/christmas`); list.value = res.data || []; };
+const fetchPots = async () => {
+    const res = await axios.get(`${API_URL}/savings/structure`);
+    pots.value = res.data.flatMap(acc => acc.pots.map(p => ({ ...p, displayName: `${acc.name} - ${p.name}` })));
+};
+const fetchSettings = async () => {
+    const res = await axios.get(`${API_URL}/settings`);
+    if(res.data.christmas_pot_id) linkedPotId.value = Number(res.data.christmas_pot_id);
+};
+
+// ACTIONS
 const addGift = async () => { 
     if(!newGift.value.recipient) return; 
     await axios.post(`${API_URL}/christmas`, newGift.value); 
@@ -30,15 +48,12 @@ const addGift = async () => {
 };
 const saveGift = async () => { await axios.put(`${API_URL}/christmas/${editForm.value.id}`, editForm.value); editingId.value = null; fetchChristmas(); };
 const deleteGift = async (id) => { await axios.delete(`${API_URL}/christmas/${id}`); fetchChristmas(); };
-
-// FIX: Removed manual toggle. v-model handles the state change, we just sync to DB.
-const toggleBought = async (g) => { 
-    await axios.post(`${API_URL}/christmas/${g.id}/toggle`, { bought: g.bought }); 
-};
-
+const toggleBought = async (g) => { await axios.post(`${API_URL}/christmas/${g.id}/toggle`, { bought: g.bought }); };
 const startEdit = (g) => { editingId.value = g.id; editForm.value = {...g}; };
 const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
+const saveLink = async () => { await axios.post(`${API_URL}/settings`, { key: 'christmas_pot_id', value: linkedPotId.value }); };
 
+// COMPUTED
 const filteredList = computed(() => {
     let items = list.value;
     if (search.value) {
@@ -56,14 +71,34 @@ const totalBudget = computed(() => list.value.reduce((a,c) => a + Number(c.amoun
 const spent = computed(() => list.value.filter(i => i.bought).reduce((a,c) => a + Number(c.amount), 0));
 const remaining = computed(() => totalBudget.value - spent.value);
 
-onMounted(fetchChristmas);
+const currentPotValue = computed(() => {
+    if(!linkedPotId.value) return 0;
+    const p = pots.value.find(x => x.id === linkedPotId.value);
+    return p ? p.amount : 0;
+});
+const savingsGap = computed(() => currentPotValue.value - totalBudget.value);
+
+onMounted(() => { fetchChristmas(); fetchPots(); fetchSettings(); });
 </script>
 
 <template>
     <div>
         <v-row class="mb-6">
-            <v-col cols="12" md="6"><v-card class="pa-6 rounded-xl bg-green-darken-3 text-white"><div class="text-h6 opacity-80">Total Budget</div><div class="text-h3 font-weight-black">£{{ totalBudget }}</div></v-card></v-col>
-            <v-col cols="12" md="6"><v-card class="pa-6 rounded-xl text-white" :class="remaining < 0 ? 'bg-red-darken-3' : 'bg-blue-grey-darken-3'"><div class="text-h6 opacity-80">Remaining</div><div class="text-h3 font-weight-black">£{{ remaining }}</div></v-card></v-col>
+            <v-col cols="12" md="4"><v-card class="pa-6 rounded-xl bg-blue-grey-darken-3 text-white h-100"><div class="text-h6 opacity-80">Total Budget</div><div class="text-h3 font-weight-black">£{{ totalBudget.toFixed(2) }}</div></v-card></v-col>
+            <v-col cols="12" md="4"><v-card class="pa-6 rounded-xl text-white h-100" :class="remaining < 0 ? 'bg-red-darken-3' : 'bg-green-darken-3'"><div class="text-h6 opacity-80">Remaining to Spend</div><div class="text-h3 font-weight-black">£{{ remaining.toFixed(2) }}</div></v-card></v-col>
+            <v-col cols="12" md="4">
+                <v-card class="pa-4 rounded-xl h-100" :color="savingsGap >= 0 ? (isDark ? 'green-darken-4' : 'green-lighten-5') : (isDark ? 'amber-darken-4' : 'amber-lighten-5')" elevation="2">
+                    <div class="text-caption font-weight-bold mb-1 text-medium-emphasis">Savings Goal</div>
+                    <v-select v-model="linkedPotId" :items="pots" item-title="displayName" item-value="id" label="Link Savings Pot" density="compact" variant="outlined" hide-details @update:modelValue="saveLink"></v-select>
+                    <div v-if="linkedPotId" class="mt-4 d-flex justify-space-between align-end">
+                        <div><div class="text-caption text-medium-emphasis">Pot Balance</div><div class="text-h5 font-weight-bold">£{{ currentPotValue.toFixed(2) }}</div></div>
+                        <div class="text-end">
+                            <div class="text-caption text-medium-emphasis">{{ savingsGap >= 0 ? 'Surplus' : 'Shortfall' }}</div>
+                            <div class="text-h5 font-weight-black" :class="savingsGap >= 0 ? 'text-green' : 'text-red'">{{ savingsGap >= 0 ? '+' : '' }}£{{ savingsGap.toFixed(2) }}</div>
+                        </div>
+                    </div>
+                </v-card>
+            </v-col>
         </v-row>
 
         <v-card class="rounded-lg mb-6">
@@ -82,19 +117,13 @@ onMounted(fetchChristmas);
                     <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
                         <template #item="{ element: col }">
                             <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header">
-                                <div class="d-flex align-center" :class="{'justify-end': col.align==='end', 'justify-center': col.align==='center'}">
-                                    <v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon>
-                                    <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
-                                        {{ col.label }}
-                                        <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
-                                    </span>
-                                </div>
+                                <div class="d-flex align-center" :class="{'justify-end': col.align==='end', 'justify-center': col.align==='center'}"><v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon><span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">{{ col.label }}<v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon></span></div>
                             </th>
                         </template>
                     </draggable>
                 </thead>
                 <tbody>
-                    <tr v-for="g in filteredList" :key="g.id" :class="{'bg-green-lighten-5': g.bought}">
+                    <tr v-for="g in filteredList" :key="g.id" :class="{'bg-green-lighten-5': g.bought && !isDark, 'bg-green-darken-4': g.bought && isDark}">
                         <td v-for="col in columns" :key="col.key" :class="'text-'+col.align">
                             <v-checkbox-btn v-if="col.key === 'bought'" v-model="g.bought" @change="toggleBought(g)" color="green" density="compact" hide-details></v-checkbox-btn>
                             <div v-else-if="col.key === 'recipient'"><v-text-field v-if="editingId===g.id" v-model="editForm.recipient" density="compact" variant="outlined"></v-text-field><span v-else>{{g.recipient}}</span></div>
