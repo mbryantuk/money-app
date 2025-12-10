@@ -30,7 +30,12 @@ const addGift = async () => {
 };
 const saveGift = async () => { await axios.put(`${API_URL}/christmas/${editForm.value.id}`, editForm.value); editingId.value = null; fetchChristmas(); };
 const deleteGift = async (id) => { await axios.delete(`${API_URL}/christmas/${id}`); fetchChristmas(); };
-const toggleBought = async (g) => { g.bought = !g.bought; await axios.post(`${API_URL}/christmas/${g.id}/toggle`, { bought: g.bought }); };
+
+// FIX: Removed manual toggle. v-model handles the state change, we just sync to DB.
+const toggleBought = async (g) => { 
+    await axios.post(`${API_URL}/christmas/${g.id}/toggle`, { bought: g.bought }); 
+};
+
 const startEdit = (g) => { editingId.value = g.id; editForm.value = {...g}; };
 const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
 
@@ -70,8 +75,8 @@ onMounted(fetchChristmas);
                     <v-col cols="12" sm="2"><v-btn block color="green" @click="addGift" height="40">Add</v-btn></v-col>
                 </v-row>
             </v-card-text>
-            <v-divider></v-divider>
             <div class="d-flex justify-end px-4 py-2"><v-text-field v-model="search" label="Search" density="compact" variant="plain" hide-details prepend-inner-icon="mdi-magnify" style="max-width: 200px"></v-text-field></div>
+            <v-divider></v-divider>
             <v-table>
                 <thead>
                     <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">

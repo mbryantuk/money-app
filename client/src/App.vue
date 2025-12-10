@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import axios from 'axios';
 import { useTheme } from 'vuetify';
 import { useRegisterSW } from 'virtual:pwa-register/vue';
@@ -32,6 +32,7 @@ const tab = ref('dashboard');
 const showCalculator = ref(false);
 const snackbar = ref(false);
 const snackbarText = ref('');
+const openList = ref([]); // State for open menus
 
 // GLOBAL DATA STATE
 const currentMonth = ref(''); 
@@ -113,9 +114,30 @@ const calcCompute = () => {
 const calcClear = () => { calcDisplay.value = '0'; calcPrevious = ''; calcOperation = null; };
 const copyToClipboard = () => { navigator.clipboard.writeText(calcDisplay.value); showMsg('Copied'); };
 
+// --- KEYBOARD LISTENER ---
+const handleKeydown = (e) => {
+    if (!showCalculator.value) return;
+    if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+    if (e.key >= '0' && e.key <= '9') calcAppend(Number(e.key));
+    if (e.key === '.') calcAppend('.');
+    if (['+', '-', '*', '/'].includes(e.key)) calcSetOp(e.key);
+    if (e.key === 'Enter' || e.key === '=') { e.preventDefault(); calcCompute(); }
+    if (e.key === 'Escape' || e.key.toLowerCase() === 'c') calcClear();
+    if (e.key === 'Backspace') {
+        calcDisplay.value = calcDisplay.value.slice(0, -1);
+        if (calcDisplay.value === '' || calcDisplay.value === '-') calcDisplay.value = '0';
+    }
+};
+
 onMounted(() => {
     determineCurrentFinancialMonth();
     fetchSettings();
+    window.addEventListener('keydown', handleKeydown);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('keydown', handleKeydown);
 });
 </script>
 
@@ -128,14 +150,21 @@ onMounted(() => {
         </h2>
       </div>
       <v-divider></v-divider>
-      <v-list nav density="compact" class="mt-2">
+      <v-list nav density="compact" class="mt-2" v-model:opened="openList">
         <v-list-item prepend-icon="mdi-view-dashboard-outline" title="Dashboard" value="dashboard" @click="tab = 'dashboard'" :active="tab === 'dashboard'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-wallet-outline" title="Budget" value="budget" @click="tab = 'budget'" :active="tab === 'budget'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-piggy-bank-outline" title="Savings" value="savings" @click="tab = 'savings'" :active="tab === 'savings'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="tab = 'mortgage'" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-gift-outline" title="Christmas" value="christmas" @click="tab = 'christmas'" :active="tab === 'christmas'" color="primary" rounded="xl"></v-list-item>
         <v-list-item prepend-icon="mdi-test-tube" title="Sandbox" value="sandbox" @click="tab = 'sandbox'" :active="tab === 'sandbox'" color="primary" rounded="xl"></v-list-item>
-        <v-list-item prepend-icon="mdi-shield-account-outline" title="Admin" value="admin" @click="tab = 'admin'" :active="tab === 'admin'" color="primary" rounded="xl"></v-list-item>
+        
+        <v-list-group value="admin_group">
+          <template v-slot:activator="{ props }">
+            <v-list-item v-bind="props" prepend-icon="mdi-shield-account-outline" title="Admin" rounded="xl"></v-list-item>
+          </template>
+          <v-list-item prepend-icon="mdi-cash-multiple" title="Salary" value="admin" @click="tab = 'admin'" :active="tab === 'admin'" color="primary" rounded="xl"></v-list-item>
+        </v-list-group>
+
         <v-list-item prepend-icon="mdi-cog-outline" title="Settings" value="settings" @click="tab = 'settings'" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
       </v-list>
     </v-navigation-drawer>
@@ -148,29 +177,34 @@ onMounted(() => {
       <v-btn :icon="isDark ? 'mdi-weather-sunny' : 'mdi-weather-night'" @click="toggleTheme" color="medium-emphasis"></v-btn>
     </v-app-bar>
 
-    <v-card v-if="showCalculator" elevation="8" class="calculator-card rounded-lg" :class="isDark ? 'bg-grey-darken-3' : 'bg-white'" width="260">
-        <v-card-title class="d-flex justify-space-between align-center py-2 px-3 bg-primary text-white">
+    <v-card v-if="showCalculator" elevation="8" class="calculator-card rounded-lg d-flex flex-column" :class="isDark ? 'bg-grey-darken-3' : 'bg-white'">
+        <v-card-title class="d-flex justify-space-between align-center py-2 px-3 bg-primary text-white flex-grow-0">
             <span class="text-caption font-weight-bold">Quick Calc</span>
             <v-icon size="small" @click="showCalculator = false">mdi-close</v-icon>
         </v-card-title>
-        <div class="d-flex justify-space-between align-center pa-2 border-b mb-2">
+        <div class="d-flex justify-space-between align-center pa-2 border-b mb-2 flex-grow-0">
             <v-btn icon="mdi-content-copy" size="x-small" variant="text" @click="copyToClipboard"></v-btn>
-            <div class="text-h5 font-monospace text-end flex-grow-1">{{ calcDisplay }}</div>
+            <div class="text-h4 font-monospace text-end flex-grow-1">{{ calcDisplay }}</div>
         </div>
-        <div class="pa-2">
-            <v-row dense>
-                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcClear" color="error">C</v-btn></v-col>
-                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('/')">/</v-btn></v-col>
-                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('*')">x</v-btn></v-col>
-                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('-')">-</v-btn></v-col>
-                <v-col cols="3" v-for="n in [7,8,9]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)">{{n}}</v-btn></v-col>
-                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('+')" class="h-100">+</v-btn></v-col>
-                <v-col cols="3" v-for="n in [4,5,6]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)">{{n}}</v-btn></v-col>
-                <v-col cols="3"></v-col>
-                <v-col cols="3" v-for="n in [1,2,3]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)">{{n}}</v-btn></v-col>
-                <v-col cols="3" style="margin-top: -38px"><v-btn block size="small" color="primary" @click="calcCompute" class="h-100">=</v-btn></v-col>
-                <v-col cols="6"><v-btn block size="small" variant="text" @click="calcAppend(0)">0</v-btn></v-col>
-                <v-col cols="3"><v-btn block size="small" variant="text" @click="calcAppend('.')">.</v-btn></v-col>
+        <div class="pa-2 flex-grow-1">
+            <v-row dense class="h-100">
+                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcClear" color="error" class="h-100 text-h6">C</v-btn></v-col>
+                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('/')" class="h-100 text-h6">/</v-btn></v-col>
+                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('*')" class="h-100 text-h6">x</v-btn></v-col>
+                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('-')" class="h-100 text-h6">-</v-btn></v-col>
+                
+                <v-col cols="3" v-for="n in [7,8,9]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)" class="h-100 text-h6">{{n}}</v-btn></v-col>
+                <v-col cols="3"><v-btn block size="small" variant="tonal" @click="calcSetOp('+')" class="h-100 text-h6">+</v-btn></v-col>
+                
+                <v-col cols="3" v-for="n in [4,5,6]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)" class="h-100 text-h6">{{n}}</v-btn></v-col>
+                <v-col cols="3"><v-btn block size="small" color="primary" @click="calcCompute" class="h-100 text-h6" style="grid-row: span 2">=</v-btn></v-col>
+                
+                <v-col cols="3" v-for="n in [1,2,3]" :key="n"><v-btn block size="small" variant="text" @click="calcAppend(n)" class="h-100 text-h6">{{n}}</v-btn></v-col>
+                
+                <v-col cols="9" class="d-flex">
+                    <v-btn block size="small" variant="text" @click="calcAppend(0)" class="h-100 text-h6 flex-grow-1" style="width: 66%">0</v-btn>
+                    <v-btn block size="small" variant="text" @click="calcAppend('.')" class="h-100 text-h6 flex-grow-1" style="width: 33%">.</v-btn>
+                </v-col>
             </v-row>
         </div>
     </v-card>
@@ -220,6 +254,21 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.calculator-card { position: fixed; top: 70px; right: 20px; z-index: 2000; }
+.calculator-card { 
+    position: fixed; 
+    top: 70px; 
+    right: 20px; 
+    z-index: 2000;
+    
+    /* New Default Size */
+    width: 320px;
+    height: 480px;
+    min-width: 280px;
+    min-height: 400px;
+
+    /* Resizable Logic */
+    resize: both;
+    overflow: auto;
+}
 .font-monospace { font-family: 'Roboto Mono', monospace; }
 </style>
