@@ -169,10 +169,10 @@ onMounted(fetchRows);
                     <v-select v-model="newEntry.month" :items="months" item-title="name" item-value="value" density="compact" variant="outlined" hide-details label="Month"></v-select>
                 </v-col>
                 <v-col cols="12" sm="3">
-                    <v-text-field v-model="newEntry.salary" label="Salary" prefix="£" type="number" density="compact" variant="outlined" hide-details></v-text-field>
+                    <v-text-field v-model="newEntry.salary" label="Salary" prefix="£" type="number" density="compact" variant="outlined" hide-details inputmode="decimal"></v-text-field>
                 </v-col>
                 <v-col cols="12" sm="3">
-                    <v-text-field v-model="newEntry.balance" label="Balance" prefix="£" type="number" density="compact" variant="outlined" hide-details></v-text-field>
+                    <v-text-field v-model="newEntry.balance" label="Balance" prefix="£" type="number" density="compact" variant="outlined" hide-details inputmode="decimal"></v-text-field>
                 </v-col>
                 <v-col cols="12" sm="1">
                     <v-btn block color="success" height="40" @click="addEntry">Add</v-btn>
@@ -207,11 +207,11 @@ onMounted(fetchRows);
                             <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedRows" :value="item.month" density="compact" hide-details></v-checkbox-btn>
                             <div v-else-if="col.key === 'month'" class="font-weight-bold">{{ item.month }}</div>
                             <div v-else-if="col.key === 'salary'">
-                                <v-text-field v-if="editingId===item.month" v-model.number="editForm.salary" prefix="£" density="compact" variant="outlined" hide-details type="number"></v-text-field>
+                                <v-text-field v-if="editingId===item.month" v-model.number="editForm.salary" prefix="£" density="compact" variant="outlined" hide-details type="number" inputmode="decimal"></v-text-field>
                                 <span v-else>£{{ item.salary ? item.salary.toFixed(2) : '0.00' }}</span>
                             </div>
                             <div v-else-if="col.key === 'balance'">
-                                <v-text-field v-if="editingId===item.month" v-model.number="editForm.balance" prefix="£" density="compact" variant="outlined" hide-details type="number"></v-text-field>
+                                <v-text-field v-if="editingId===item.month" v-model.number="editForm.balance" prefix="£" density="compact" variant="outlined" hide-details type="number" inputmode="decimal"></v-text-field>
                                 <span v-else :class="item.balance < 0 ? 'text-red' : 'text-green'">£{{ item.balance ? item.balance.toFixed(2) : '0.00' }}</span>
                             </div>
                             <div v-else-if="col.key === 'actions'">

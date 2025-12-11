@@ -1,7 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import axios from 'axios';
-import { useTheme } from 'vuetify';
+import { useTheme, useDisplay } from 'vuetify';
 import { useRegisterSW } from 'virtual:pwa-register/vue';
 
 // COMPONENTS
@@ -17,6 +17,7 @@ import SettingsTab from './components/SettingsTab.vue';
 // CONFIG
 const API_URL = '/api';
 const theme = useTheme();
+const { mobile } = useDisplay();
 
 // PWA Auto-Update
 const intervalMS = 60 * 60 * 1000;
@@ -27,7 +28,7 @@ useRegisterSW({
 });
 
 // UI STATE
-const drawer = ref(true);
+const drawer = ref(!mobile.value); 
 const tab = ref('dashboard');
 const showCalculator = ref(false);
 const snackbar = ref(false);
@@ -37,7 +38,7 @@ const openList = ref([]);
 // GLOBAL DATA STATE
 const currentMonth = ref(''); 
 const defaultSalary = ref(0);
-const payDay = ref(19); // Default to 19
+const payDay = ref(19); 
 const availableCategories = ref([]);
 const availablePeople = ref([]);
 const templates = ref([]);
@@ -51,16 +52,28 @@ const calcResetNext = ref(false);
 const isDark = computed(() => theme.global.current.value.dark);
 const toggleTheme = () => theme.global.name.value = isDark.value ? 'light' : 'dark';
 
+// --- NAVIGATION HANDLER ---
+// Prevents the "blank screen" by intercepting the 'menu' click
+const handleNav = (val) => {
+  if (val === 'menu') {
+    drawer.value = !drawer.value;
+  } else {
+    tab.value = val;
+  }
+};
+
+// Helper to select tab and close drawer on mobile
+const selectTab = (val) => {
+  tab.value = val;
+  if (mobile.value) drawer.value = false;
+};
+
 // --- FINANCIAL MONTH LOGIC ---
 const getPayDate = (year, month) => {
-    // Use the configurable payDay value
     let d = new Date(year, month, payDay.value);
     const day = d.getDay(); 
-    
-    // Weekend Adjustment (Sun->Fri, Sat->Fri)
     if (day === 0) d.setDate(d.getDate() - 2); 
     else if (day === 6) d.setDate(d.getDate() - 1); 
-
     return d.getDate();
 };
 
@@ -72,7 +85,6 @@ const determineCurrentFinancialMonth = () => {
     
     const payDayThisMonth = getPayDate(y, m);
 
-    // If today is BEFORE payday, we are in the previous month's budget
     if (d < payDayThisMonth) {
         const prevDate = new Date(y, m - 1, 1);
         currentMonth.value = prevDate.toISOString().slice(0, 7);
@@ -86,7 +98,7 @@ const fetchSettings = async () => {
   try {
     const res = await axios.get(`${API_URL}/settings`);
     if (res.data.default_salary) defaultSalary.value = parseFloat(res.data.default_salary);
-    if (res.data.pay_day) payDay.value = parseInt(res.data.pay_day); // Load Pay Day
+    if (res.data.pay_day) payDay.value = parseInt(res.data.pay_day);
     
     if (res.data.categories) availableCategories.value = JSON.parse(res.data.categories);
     else availableCategories.value = ['Housing', 'Utilities', 'Food', 'Insurance', 'Subscription', 'Mobile', 'Savings', 'Spending', 'Medical', 'Tax'];
@@ -97,7 +109,6 @@ const fetchSettings = async () => {
     const tRes = await axios.get(`${API_URL}/templates`);
     templates.value = tRes.data || [];
     
-    // Recalculate current month after fetching settings to ensure correct payday is used
     determineCurrentFinancialMonth();
   } catch (e) { console.error("Settings Error", e); }
 };
@@ -142,16 +153,33 @@ const handleKeydown = (e) => {
 onMounted(() => {
     fetchSettings();
     window.addEventListener('keydown', handleKeydown);
+
+    // Parse URL params for Shortcuts
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('tab')) {
+        tab.value = params.get('tab');
+        window.history.replaceState({}, document.title, "/");
+    }
 });
 
 onUnmounted(() => {
     window.removeEventListener('keydown', handleKeydown);
 });
+
+// Watch mobile state to auto-close/open drawer appropriately
+watch(mobile, (isMobile) => {
+  drawer.value = !isMobile;
+});
 </script>
 
 <template>
   <v-app>
-    <v-navigation-drawer v-model="drawer" app color="surface">
+    <v-navigation-drawer 
+      v-model="drawer" 
+      :temporary="mobile"
+      :permanent="!mobile"
+      color="surface"
+    >
       <div class="pa-4">
         <h2 class="text-h6 font-weight-bold text-primary d-flex align-center">
           <v-icon icon="mdi-bank" class="mr-2"></v-icon> Money 2.0
@@ -159,26 +187,27 @@ onUnmounted(() => {
       </div>
       <v-divider></v-divider>
       <v-list nav density="compact" class="mt-2" v-model:opened="openList">
-        <v-list-item prepend-icon="mdi-view-dashboard-outline" title="Dashboard" value="dashboard" @click="tab = 'dashboard'" :active="tab === 'dashboard'" color="primary" rounded="xl"></v-list-item>
-        <v-list-item prepend-icon="mdi-wallet-outline" title="Budget" value="budget" @click="tab = 'budget'" :active="tab === 'budget'" color="primary" rounded="xl"></v-list-item>
-        <v-list-item prepend-icon="mdi-piggy-bank-outline" title="Savings" value="savings" @click="tab = 'savings'" :active="tab === 'savings'" color="primary" rounded="xl"></v-list-item>
-        <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="tab = 'mortgage'" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
-        <v-list-item prepend-icon="mdi-gift-outline" title="Christmas" value="christmas" @click="tab = 'christmas'" :active="tab === 'christmas'" color="primary" rounded="xl"></v-list-item>
-        <v-list-item prepend-icon="mdi-test-tube" title="Sandbox" value="sandbox" @click="tab = 'sandbox'" :active="tab === 'sandbox'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-view-dashboard-outline" title="Dashboard" value="dashboard" @click="selectTab('dashboard')" :active="tab === 'dashboard'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-wallet-outline" title="Budget" value="budget" @click="selectTab('budget')" :active="tab === 'budget'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-piggy-bank-outline" title="Savings" value="savings" @click="selectTab('savings')" :active="tab === 'savings'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="selectTab('mortgage')" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-gift-outline" title="Christmas" value="christmas" @click="selectTab('christmas')" :active="tab === 'christmas'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-test-tube" title="Sandbox" value="sandbox" @click="selectTab('sandbox')" :active="tab === 'sandbox'" color="primary" rounded="xl"></v-list-item>
         
         <v-list-group value="admin_group">
           <template v-slot:activator="{ props }">
             <v-list-item v-bind="props" prepend-icon="mdi-shield-account-outline" title="Admin" rounded="xl"></v-list-item>
           </template>
-          <v-list-item prepend-icon="mdi-cash-multiple" title="Salary" value="admin" @click="tab = 'admin'" :active="tab === 'admin'" color="primary" rounded="xl"></v-list-item>
+          <v-list-item prepend-icon="mdi-cash-multiple" title="Salary" value="admin" @click="selectTab('admin')" :active="tab === 'admin'" color="primary" rounded="xl"></v-list-item>
         </v-list-group>
 
-        <v-list-item prepend-icon="mdi-cog-outline" title="Settings" value="settings" @click="tab = 'settings'" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
+        <v-list-item prepend-icon="mdi-cog-outline" title="Settings" value="settings" @click="selectTab('settings')" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
       </v-list>
     </v-navigation-drawer>
 
     <v-app-bar elevation="1" color="surface">
-      <v-app-bar-nav-icon @click="drawer = !drawer"></v-app-bar-nav-icon>
+      <v-app-bar-nav-icon v-if="!mobile" @click="drawer = !drawer"></v-app-bar-nav-icon>
+      
       <v-app-bar-title class="font-weight-bold text-primary">{{ tab.charAt(0).toUpperCase() + tab.slice(1) }}</v-app-bar-title>
       <v-spacer></v-spacer>
       <v-btn :icon="showCalculator ? 'mdi-calculator' : 'mdi-calculator-variant-outline'" @click="showCalculator = !showCalculator" :color="showCalculator ? 'primary' : 'medium-emphasis'" class="mr-2"></v-btn>
@@ -246,7 +275,33 @@ onUnmounted(() => {
       </v-container>
     </v-main>
 
-    <v-snackbar v-model="snackbar" timeout="2000" color="success" location="bottom right">{{ snackbarText }}<template v-slot:actions><v-btn color="white" variant="text" @click="snackbar = false">Close</v-btn></template></v-snackbar>
+    <v-bottom-navigation 
+      v-if="mobile" 
+      :model-value="tab" 
+      @update:model-value="handleNav"
+      color="primary" 
+      grow
+    >
+      <v-btn value="dashboard">
+        <v-icon>mdi-view-dashboard-outline</v-icon>
+        <span>Dash</span>
+      </v-btn>
+      <v-btn value="budget">
+        <v-icon>mdi-wallet-outline</v-icon>
+        <span>Budget</span>
+      </v-btn>
+      <v-btn value="savings">
+        <v-icon>mdi-piggy-bank-outline</v-icon>
+        <span>Save</span>
+      </v-btn>
+      
+      <v-btn value="menu">
+        <v-icon>mdi-menu</v-icon>
+        <span>Menu</span>
+      </v-btn>
+    </v-bottom-navigation>
+
+    <v-snackbar v-model="snackbar" timeout="2000" color="success" location="bottom right" :style="{ bottom: mobile ? '60px' : '0' }">{{ snackbarText }}<template v-slot:actions><v-btn color="white" variant="text" @click="snackbar = false">Close</v-btn></template></v-snackbar>
   </v-app>
 </template>
 

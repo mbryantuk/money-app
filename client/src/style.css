@@ -60,3 +60,10 @@ button:focus-visible {
   opacity: 0.5;
   background: #c8ebfb;
 }
+
+/* NEW: Safe Area Padding for iOS PWA */
+.v-main {
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}

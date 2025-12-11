@@ -9,7 +9,7 @@ const props = defineProps({
   people: Array,
   categories: Array,
   defaultSalary: Number,
-  payDay: { type: Number, default: 19 } // NEW PROP
+  payDay: { type: Number, default: 19 } 
 });
 const emit = defineEmits(['update:month', 'notify']);
 const API_URL = '/api';
@@ -41,7 +41,7 @@ const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing'
 
 // --- PAY DATE CALCULATION (Dynamic from Prop) ---
 const getPayDate = (year, month) => {
-    let d = new Date(year, month, props.payDay); // Use prop
+    let d = new Date(year, month, props.payDay); 
     const day = d.getDay(); 
     if (day === 0) d.setDate(d.getDate() - 2); 
     else if (day === 6) d.setDate(d.getDate() - 1); 
@@ -189,8 +189,8 @@ onMounted(fetchData);
 
         <div v-else>
             <v-row class="mb-4">
-                <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center"><div class="text-subtitle-1 text-medium-emphasis">Salary</div><v-text-field v-model.number="salary" prefix="£" variant="underlined" class="text-h4 font-weight-bold centered-input" @keydown.enter="updateSalary" append-inner-icon="mdi-content-save" @click:append-inner="updateSalary"></v-text-field></v-card></v-col>
-                <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center" :color="balance < 0 ? 'red-lighten-5' : undefined"><div class="text-subtitle-1 text-medium-emphasis">Balance</div><v-text-field v-model.number="balance" prefix="£" variant="underlined" class="text-h4 font-weight-black centered-input" @keydown.enter="updateBalance" append-inner-icon="mdi-content-save" @click:append-inner="updateBalance"></v-text-field></v-card></v-col>
+                <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center"><div class="text-subtitle-1 text-medium-emphasis">Salary</div><v-text-field v-model.number="salary" prefix="£" variant="underlined" class="text-h4 font-weight-bold centered-input" @keydown.enter="updateSalary" append-inner-icon="mdi-content-save" @click:append-inner="updateSalary" inputmode="decimal"></v-text-field></v-card></v-col>
+                <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center" :color="balance < 0 ? 'red-lighten-5' : undefined"><div class="text-subtitle-1 text-medium-emphasis">Balance</div><v-text-field v-model.number="balance" prefix="£" variant="underlined" class="text-h4 font-weight-black centered-input" @keydown.enter="updateBalance" append-inner-icon="mdi-content-save" @click:append-inner="updateBalance" inputmode="decimal"></v-text-field></v-card></v-col>
                 <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5 text-center" :color="projectedBalance < 0 ? 'red-lighten-5' : undefined"><div class="text-subtitle-1 text-medium-emphasis">Projected</div><div class="text-h4 font-weight-black">£{{ projectedBalance.toFixed(2) }}</div><v-progress-linear v-model="progressPercentage" height="6" rounded class="mt-4" striped :color="projectedBalance < 0 ? 'red' : 'green'"></v-progress-linear></v-card></v-col>
                 <v-col cols="12" sm="3"><v-card class="h-100 rounded-lg pa-5"><div class="text-subtitle-1 text-medium-emphasis mb-2">Unpaid Split</div><div v-for="(amt, p) in breakdownByWho" :key="p" class="d-flex justify-space-between border-b py-1"><span class="text-uppercase font-weight-bold" :style="{ color: getChipColor(p) }">{{p}}</span><span class="font-monospace text-red">£{{amt.toFixed(2)}}</span></div></v-card></v-col>
             </v-row>
@@ -200,7 +200,7 @@ onMounted(fetchData);
                     <v-row dense>
                         <v-col cols="3"><v-select v-model="newExpense.who" :items="people" density="compact" variant="solo" hide-details label="Who"></v-select></v-col>
                         <v-col cols="3"><v-text-field v-model="newExpense.name" density="compact" variant="solo" hide-details label="Bill Name"></v-text-field></v-col>
-                        <v-col cols="2"><v-text-field v-model="newExpense.amount" type="number" prefix="£" density="compact" variant="solo" hide-details label="Amount"></v-text-field></v-col>
+                        <v-col cols="2"><v-text-field v-model="newExpense.amount" type="number" prefix="£" density="compact" variant="solo" hide-details label="Amount" inputmode="decimal"></v-text-field></v-col>
                         <v-col cols="2"><v-select v-model="newExpense.category" :items="categories" density="compact" variant="solo" hide-details label="Category"></v-select></v-col>
                         <v-col cols="2"><v-btn block color="primary" @click="addExpense" height="40">Add</v-btn></v-col>
                     </v-row>
@@ -241,7 +241,7 @@ onMounted(fetchData);
                                     <span v-else>{{ex.name}}</span>
                                 </div>
                                 <div v-else-if="col.key === 'amount'">
-                                    <v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined" hide-details type="number"></v-text-field>
+                                    <v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined" hide-details type="number" inputmode="decimal"></v-text-field>
                                     <span v-else class="font-monospace font-weight-bold">£{{ex.amount.toFixed(2)}}</span>
                                 </div>
                                 <div v-else-if="col.key === 'category'">
