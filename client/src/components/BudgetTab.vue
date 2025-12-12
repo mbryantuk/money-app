@@ -3,11 +3,15 @@ import { ref, computed, watch, onMounted } from 'vue';
 import axios from 'axios';
 import draggable from 'vuedraggable';
 import { useTheme } from 'vuetify';
-import { useSettingsStore } from '../stores/settings'; // Import Store
 
-// GLOBAL STATE
-const settings = useSettingsStore(); // Initialize Store
-const emit = defineEmits(['notify']);
+const props = defineProps({
+  month: String,
+  people: Array,
+  categories: Array,
+  defaultSalary: Number,
+  payDay: { type: Number, default: 19 } 
+});
+const emit = defineEmits(['update:month', 'notify']);
 const API_URL = '/api';
 const theme = useTheme();
 const isDark = computed(() => theme.global.current.value.dark);
@@ -35,9 +39,9 @@ const sortKey = ref('paid');
 const sortOrder = ref(1);
 const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing' });
 
-// --- PAY DATE CALCULATION ---
+// --- PAY DATE CALCULATION (Dynamic from Prop) ---
 const getPayDate = (year, month) => {
-    let d = new Date(year, month, settings.payDay); 
+    let d = new Date(year, month, props.payDay); 
     const day = d.getDay(); 
     if (day === 0) d.setDate(d.getDate() - 2); 
     else if (day === 6) d.setDate(d.getDate() - 1); 
@@ -45,8 +49,8 @@ const getPayDate = (year, month) => {
 };
 
 const formattedMonth = computed(() => {
-    if (!settings.currentMonth) return { main: '', range: '', days: 0 };
-    const [y, m] = settings.currentMonth.split('-').map(Number);
+    if (!props.month) return { main: '', range: '', days: 0 };
+    const [y, m] = props.month.split('-').map(Number);
     
     // Logic: Month 'm' spans from Payday(m-1) to Payday(m) - 1 day
     const startDayVal = getPayDate(y, m - 1); 
@@ -97,32 +101,30 @@ const filteredExpenses = computed(() => {
 
 // ACTIONS
 const fetchData = async () => {
-    if (!settings.currentMonth) return;
-    const res = await axios.get(`${API_URL}/data`, { params: { month: settings.currentMonth } });
+    const res = await axios.get(`${API_URL}/data`, { params: { month: props.month } });
     balance.value = parseFloat(res.data.balance) || 0;
-    salary.value = parseFloat(res.data.salary) || settings.defaultSalary;
+    salary.value = parseFloat(res.data.salary) || props.defaultSalary;
     expenses.value = res.data.expenses || [];
     selectedExpenses.value = [];
 };
-const updateBalance = async () => { await axios.post(`${API_URL}/balance`, { month: settings.currentMonth, amount: Number(balance.value) }); emit('notify', 'Balance Saved'); };
-const updateSalary = async () => { await axios.post(`${API_URL}/salary`, { month: settings.currentMonth, amount: Number(salary.value) }); emit('notify', 'Salary Logged'); };
+const updateBalance = async () => { await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) }); emit('notify', 'Balance Saved'); };
+const updateSalary = async () => { await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) }); emit('notify', 'Salary Logged'); };
 const changeMonth = (offset) => {
-    const [y, m] = settings.currentMonth.split('-').map(Number);
+    const [y, m] = props.month.split('-').map(Number);
     const d = new Date(y, m - 1 + offset, 1);
-    // Update store state directly
-    settings.currentMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    emit('update:month', `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
 };
 const initMonth = async (source) => {
     if(!confirm("Initialize month?")) return;
-    const [y, m] = settings.currentMonth.split('-').map(Number);
+    const [y, m] = props.month.split('-').map(Number);
     const pd = new Date(y, m - 2, 1);
-    await axios.post(`${API_URL}/month/init`, { month: settings.currentMonth, source, previousMonth: `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}` });
+    await axios.post(`${API_URL}/month/init`, { month: props.month, source, previousMonth: `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}` });
     fetchData();
 };
-const resetMonth = async () => { if(confirm("Delete ALL data?")) { await axios.delete(`${API_URL}/month`, { params: { month: settings.currentMonth } }); fetchData(); } };
+const resetMonth = async () => { if(confirm("Delete ALL data?")) { await axios.delete(`${API_URL}/month`, { params: { month: props.month } }); fetchData(); } };
 const addExpense = async () => {
     if(!newExpense.value.name || !newExpense.value.amount) return;
-    await axios.post(`${API_URL}/expenses`, { ...newExpense.value, month: settings.currentMonth, amount: parseFloat(newExpense.value.amount) });
+    await axios.post(`${API_URL}/expenses`, { ...newExpense.value, month: props.month, amount: parseFloat(newExpense.value.amount) });
     newExpense.value.name = ''; newExpense.value.amount = ''; fetchData();
 };
 const togglePaid = async (item) => {
@@ -156,13 +158,8 @@ const getRowStyle = (ex) => {
 const getChipColor = (who) => `hsl(${getStringHue(who || 'Joint')}, 70%, 40%)`;
 const formatDateTime = (iso) => iso ? new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '';
 
-// Watch store for changes to month
-watch(() => settings.currentMonth, fetchData);
-onMounted(() => {
-    // If settings haven't loaded yet, fetch them (handled in App.vue mostly, but safe to check)
-    if (!settings.currentMonth) settings.fetchSettings();
-    else fetchData();
-});
+watch(() => props.month, fetchData);
+onMounted(fetchData);
 </script>
 
 <template>
@@ -201,10 +198,10 @@ onMounted(() => {
             <v-card class="rounded-lg" elevation="3">
                 <v-card-text class="pa-4 bg-surface">
                     <v-row dense>
-                        <v-col cols="3"><v-select v-model="newExpense.who" :items="settings.people" density="compact" variant="solo" hide-details label="Who"></v-select></v-col>
+                        <v-col cols="3"><v-select v-model="newExpense.who" :items="people" density="compact" variant="solo" hide-details label="Who"></v-select></v-col>
                         <v-col cols="3"><v-text-field v-model="newExpense.name" density="compact" variant="solo" hide-details label="Bill Name"></v-text-field></v-col>
                         <v-col cols="2"><v-text-field v-model="newExpense.amount" type="number" prefix="£" density="compact" variant="solo" hide-details label="Amount" inputmode="decimal"></v-text-field></v-col>
-                        <v-col cols="2"><v-select v-model="newExpense.category" :items="settings.categories" density="compact" variant="solo" hide-details label="Category"></v-select></v-col>
+                        <v-col cols="2"><v-select v-model="newExpense.category" :items="categories" density="compact" variant="solo" hide-details label="Category"></v-select></v-col>
                         <v-col cols="2"><v-btn block color="primary" @click="addExpense" height="40">Add</v-btn></v-col>
                     </v-row>
                 </v-card-text>
@@ -236,7 +233,7 @@ onMounted(() => {
                                     <v-btn v-else :icon="ex.paid ? 'mdi-check-bold' : 'mdi-circle-outline'" :color="ex.paid?'green':'grey'" variant="text" size="small" @click="togglePaid(ex)"></v-btn>
                                 </div>
                                 <div v-else-if="col.key === 'who'">
-                                    <v-select v-if="editingId===ex.id" v-model="editForm.who" :items="settings.people" density="compact" variant="outlined" hide-details></v-select>
+                                    <v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined" hide-details></v-select>
                                     <v-chip v-else :color="getChipColor(ex.who)" size="small" label class="text-uppercase font-weight-bold" variant="flat" style="color: white !important">{{ex.who}}</v-chip>
                                 </div>
                                 <div v-else-if="col.key === 'name'">
@@ -248,7 +245,7 @@ onMounted(() => {
                                     <span v-else class="font-monospace font-weight-bold">£{{ex.amount.toFixed(2)}}</span>
                                 </div>
                                 <div v-else-if="col.key === 'category'">
-                                    <v-select v-if="editingId===ex.id" v-model="editForm.category" :items="settings.categories" density="compact" variant="outlined" hide-details></v-select>
+                                    <v-select v-if="editingId===ex.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined" hide-details></v-select>
                                     <span v-else class="text-caption">{{ex.category}}</span>
                                 </div>
                                 <div v-else-if="col.key === 'actions'">

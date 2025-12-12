@@ -3,9 +3,8 @@ import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 import draggable from 'vuedraggable';
 import { useTheme } from 'vuetify';
-import { useSettingsStore } from '../stores/settings';
 
-const settings = useSettingsStore();
+const props = defineProps({ people: Array, categories: Array, currentMonth: String });
 const emit = defineEmits(['notify']);
 const API_URL = '/api';
 const theme = useTheme();
@@ -45,13 +44,7 @@ const addItem = async () => {
 const saveItem = async () => { await axios.put(`${API_URL}/sandbox/${editForm.value.id}`, editForm.value); editingId.value = null; fetchSandbox(); };
 const deleteItem = async (id) => { await axios.delete(`${API_URL}/sandbox/${id}`); fetchSandbox(); };
 const clear = async () => { if(confirm("Clear?")) { await axios.post(`${API_URL}/sandbox/clear`); fetchSandbox(); }};
-const importMonth = async () => { 
-    if(confirm("Overwrite?")) { 
-        await axios.post(`${API_URL}/sandbox/clear`); 
-        await axios.post(`${API_URL}/sandbox/import`, { month: settings.currentMonth }); 
-        fetchSandbox(); 
-    }
-};
+const importMonth = async () => { if(confirm("Overwrite?")) { await axios.post(`${API_URL}/sandbox/clear`); await axios.post(`${API_URL}/sandbox/import`, { month: props.currentMonth }); fetchSandbox(); }};
 const saveProfile = async () => { if(!newProfile.value) return; await axios.post(`${API_URL}/sandbox/profiles`, { name: newProfile.value, salary: salary.value, expenses: expenses.value }); newProfile.value = ''; fetchSandbox(); emit('notify', 'Saved'); };
 const loadProfile = async (id) => { if(confirm("Load?")) { const res = await axios.post(`${API_URL}/sandbox/profiles/${id}/load`); salary.value = res.data.salary; fetchSandbox(); }};
 const deleteProfile = async (id) => { if(confirm("Delete?")) { await axios.delete(`${API_URL}/sandbox/profiles/${id}`); fetchSandbox(); }};
@@ -97,10 +90,10 @@ onMounted(fetchSandbox);
         <v-card>
             <v-card-text class="bg-background pa-4">
                 <v-row dense>
-                    <v-col cols="3"><v-select v-model="newItem.who" :items="settings.people" density="compact" variant="solo" hide-details></v-select></v-col>
+                    <v-col cols="3"><v-select v-model="newItem.who" :items="people" density="compact" variant="solo" hide-details></v-select></v-col>
                     <v-col cols="3"><v-text-field v-model="newItem.name" label="Item" density="compact" variant="solo" hide-details></v-text-field></v-col>
                     <v-col cols="2"><v-text-field v-model="newItem.amount" type="number" prefix="£" density="compact" variant="solo" hide-details></v-text-field></v-col>
-                    <v-col cols="2"><v-select v-model="newItem.category" :items="settings.categories" density="compact" variant="solo" hide-details></v-select></v-col>
+                    <v-col cols="2"><v-select v-model="newItem.category" :items="categories" density="compact" variant="solo" hide-details></v-select></v-col>
                     <v-col cols="2"><v-btn block color="deep-purple" @click="addItem">Add</v-btn></v-col>
                 </v-row>
             </v-card-text>
@@ -118,10 +111,10 @@ onMounted(fetchSandbox);
                 <tbody>
                     <tr v-for="ex in filteredExpenses" :key="ex.id">
                         <td v-for="col in columns" :key="col.key" :class="'text-'+col.align">
-                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="settings.people" density="compact" variant="outlined"></v-select><span v-else>{{ex.who}}</span></div>
+                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined"></v-select><span v-else>{{ex.who}}</span></div>
                             <div v-else-if="col.key === 'name'"><v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined"></v-text-field><span v-else>{{ex.name}}</span></div>
                             <div v-else-if="col.key === 'amount'"><v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined"></v-text-field><span v-else>£{{ex.amount.toFixed(2)}}</span></div>
-                            <div v-else-if="col.key === 'category'"><v-select v-if="editingId===ex.id" v-model="editForm.category" :items="settings.categories" density="compact" variant="outlined"></v-select><span v-else>{{ex.category}}</span></div>
+                            <div v-else-if="col.key === 'category'"><v-select v-if="editingId===ex.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined"></v-select><span v-else>{{ex.category}}</span></div>
                             <div v-else-if="col.key === 'actions'">
                                 <div v-if="editingId===ex.id"><v-btn icon="mdi-check" size="small" variant="text" color="green" @click="saveItem"></v-btn></div>
                                 <div v-else><v-btn icon="mdi-pencil" size="small" variant="text" color="grey" @click="startEdit(ex)"></v-btn><v-btn icon="mdi-delete" size="small" variant="text" color="grey" @click="deleteItem(ex.id)"></v-btn></div>
