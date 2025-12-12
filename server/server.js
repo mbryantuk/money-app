@@ -15,6 +15,9 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS sandbox_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, amount REAL, category TEXT, who TEXT, paid INTEGER DEFAULT 0)`);
     db.run(`CREATE TABLE IF NOT EXISTS sandbox_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, salary REAL, items TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS christmas_list (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT, item TEXT, amount REAL, bought INTEGER DEFAULT 0)`);
+    // --- CREDIT CARDS ---
+    db.run(`CREATE TABLE IF NOT EXISTS credit_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, limit_amount REAL, interest_rate REAL, balance REAL)`);
+    db.run(`CREATE TABLE IF NOT EXISTS cc_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, card_id INTEGER, date TEXT, description TEXT, amount REAL, category TEXT, paid INTEGER DEFAULT 0)`);
 });
 
 // --- DATA ENDPOINTS ---
@@ -29,7 +32,7 @@ app.get('/api/data', (req, res) => {
         db.all("SELECT * FROM expenses WHERE month = ?", [month], (err, rows) => {
             response.expenses = rows || [];
             db.all("SELECT * FROM savings", (err, pots) => {
-                response.savings = pots;
+                response.savings = pots || [];
                 res.json(response);
             });
         });
@@ -46,10 +49,120 @@ app.post('/api/salary', (req, res) => {
     db.run(`INSERT INTO monthly_balances (month, salary) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET salary=excluded.salary`, [month, amount], () => res.json({ success: true }));
 });
 
-// --- ADMIN ENDPOINTS (NEW) ---
+// --- CREDIT CARDS ENDPOINTS ---
+app.get('/api/credit-cards', (req, res) => {
+    db.all("SELECT * FROM credit_cards", (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/credit-cards', (req, res) => {
+    const { name, limit_amount, interest_rate, balance } = req.body;
+    db.run("INSERT INTO credit_cards (name, limit_amount, interest_rate, balance) VALUES (?, ?, ?, ?)", 
+        [name, limit_amount, interest_rate, balance || 0], 
+        function() { res.json({ id: this.lastID }); }
+    );
+});
+
+app.put('/api/credit-cards/:id', (req, res) => {
+    const { name, limit_amount, interest_rate, balance } = req.body;
+    db.run("UPDATE credit_cards SET name=?, limit_amount=?, interest_rate=?, balance=? WHERE id=?", 
+        [name, limit_amount, interest_rate, balance, req.params.id], 
+        () => res.json({ success: true })
+    );
+});
+
+app.delete('/api/credit-cards/:id', (req, res) => {
+    db.serialize(() => {
+        db.run("DELETE FROM cc_transactions WHERE card_id = ?", [req.params.id]);
+        db.run("DELETE FROM credit_cards WHERE id = ?", [req.params.id]);
+    });
+    res.json({ success: true });
+});
+
+app.get('/api/credit-cards/:id/transactions', (req, res) => {
+    db.all("SELECT * FROM cc_transactions WHERE card_id = ? AND paid = 0 ORDER BY date DESC", [req.params.id], (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/credit-cards/:id/transactions', (req, res) => {
+    const { date, description, amount, category } = req.body;
+    db.run("INSERT INTO cc_transactions (card_id, date, description, amount, category, paid) VALUES (?, ?, ?, ?, ?, 0)", 
+        [req.params.id, date, description, amount, category], 
+        function() { res.json({ id: this.lastID }); }
+    );
+});
+
+// --- NEW TRANSACTION ENDPOINTS (Corrected) ---
+
+// Edit Transaction
+app.put('/api/cc_transactions/:id', (req, res) => {
+    const { date, description, amount, category } = req.body;
+    db.run("UPDATE cc_transactions SET date = ?, description = ?, amount = ?, category = ? WHERE id = ?", 
+        [date, description, amount, category, req.params.id], 
+        () => res.json({ success: true })
+    );
+});
+
+// Toggle Paid Status
+app.post('/api/cc_transactions/:id/toggle', (req, res) => {
+    const { paid } = req.body;
+    db.run("UPDATE cc_transactions SET paid = ? WHERE id = ?", [paid ? 1 : 0, req.params.id], () => res.json({ success: true }));
+});
+
+// "Pay" endpoint: Clears transactions and updates balance
+app.post('/api/credit-cards/:id/pay', (req, res) => {
+    const { clearBalance } = req.body; 
+    db.serialize(() => {
+        db.run("DELETE FROM cc_transactions WHERE card_id = ?", [req.params.id]);
+        if (clearBalance) {
+            db.run("UPDATE credit_cards SET balance = 0 WHERE id = ?", [req.params.id]);
+        }
+    });
+    res.json({ success: true });
+});
+
+
+// --- ADMIN ENDPOINTS ---
 app.get('/api/admin/data', (req, res) => {
     db.all("SELECT month, salary, amount as balance FROM monthly_balances ORDER BY month DESC", (err, rows) => {
         res.json(rows || []);
+    });
+});
+
+const ALLOWED_TABLES = ['expenses', 'monthly_balances', 'settings', 'expense_templates', 'savings_accounts', 'savings_pots', 'sandbox_expenses', 'sandbox_profiles', 'christmas_list', 'credit_cards', 'cc_transactions'];
+
+app.get('/api/admin/table/:name', (req, res) => {
+    if (!ALLOWED_TABLES.includes(req.params.name)) return res.status(403).json({ error: "Invalid table" });
+    const limit = req.params.name === 'expenses' ? 'ORDER BY id DESC LIMIT 500' : '';
+    db.all(`SELECT * FROM ${req.params.name} ${limit}`, (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/admin/table/:name', (req, res) => {
+    if (!ALLOWED_TABLES.includes(req.params.name)) return res.status(403).json({ error: "Invalid table" });
+    const cols = Object.keys(req.body);
+    const vals = Object.values(req.body);
+    const placeholders = cols.map(() => '?').join(',');
+    const sql = `INSERT INTO ${req.params.name} (${cols.join(',')}) VALUES (${placeholders})`;
+    db.run(sql, vals, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ id: this.lastID, success: true });
+    });
+});
+
+app.put('/api/admin/table/:name/:id', (req, res) => {
+    if (!ALLOWED_TABLES.includes(req.params.name)) return res.status(403).json({ error: "Invalid table" });
+    const cols = Object.keys(req.body).map(c => `${c} = ?`).join(',');
+    const vals = [...Object.values(req.body), req.params.id];
+    const idCol = req.params.name === 'settings' ? 'key' : 'id';
+    db.run(`UPDATE ${req.params.name} SET ${cols} WHERE ${idCol} = ?`, vals, (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.delete('/api/admin/table/:name/:id', (req, res) => {
+    if (!ALLOWED_TABLES.includes(req.params.name)) return res.status(403).json({ error: "Invalid table" });
+    const idCol = req.params.name === 'settings' ? 'key' : 'id';
+    db.run(`DELETE FROM ${req.params.name} WHERE ${idCol} = ?`, [req.params.id], (err) => {
+        res.json({ success: true });
     });
 });
 
@@ -57,7 +170,7 @@ app.get('/api/admin/data', (req, res) => {
 app.get('/api/settings', (req, res) => {
     db.all("SELECT * FROM settings", (err, rows) => {
         const settings = {};
-        rows.forEach(r => settings[r.key] = r.value);
+        if (rows) rows.forEach(r => settings[r.key] = r.value);
         res.json(settings);
     });
 });
@@ -221,14 +334,16 @@ app.get('/api/savings/structure', (req, res) => {
     const query = `SELECT a.id as account_id, a.name as account_name, p.id as pot_id, p.name as pot_name, p.amount as pot_amount FROM savings_accounts a LEFT JOIN savings_pots p ON a.id = p.account_id`;
     db.all(query, (err, rows) => {
         const accountsMap = new Map();
-        rows.forEach(row => {
-            if (!accountsMap.has(row.account_id)) accountsMap.set(row.account_id, { id: row.account_id, name: row.account_name, total: 0, pots: [] });
-            if (row.pot_id) { 
-                const acc = accountsMap.get(row.account_id);
-                acc.pots.push({ id: row.pot_id, name: row.pot_name, amount: row.pot_amount });
-                acc.total += row.pot_amount;
-            }
-        });
+        if(rows) {
+            rows.forEach(row => {
+                if (!accountsMap.has(row.account_id)) accountsMap.set(row.account_id, { id: row.account_id, name: row.account_name, total: 0, pots: [] });
+                if (row.pot_id) { 
+                    const acc = accountsMap.get(row.account_id);
+                    acc.pots.push({ id: row.pot_id, name: row.pot_name, amount: row.pot_amount });
+                    acc.total += row.pot_amount;
+                }
+            });
+        }
         res.json(Array.from(accountsMap.values()));
     });
 });
