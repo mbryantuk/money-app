@@ -1,40 +1,38 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia' // [!code ++]
+import router from './router' // [!code ++]
+import './style.css'
 import App from './App.vue'
 
 // Vuetify
 import 'vuetify/styles'
 import { createVuetify } from 'vuetify'
-import { md3 } from 'vuetify/blueprints' // <--- 1. IMPORT THIS
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
+import { aliases, mdi } from 'vuetify/iconsets/mdi'
 import '@mdi/font/css/materialdesignicons.css'
 
-// 🌊 Deep Ocean Theme (MD3 version)
-const myCustomTheme = {
-  dark: false,
-  colors: {
-    background: '#F2F5F8',
-    surface: '#FFFFFF',
-    primary: '#1976D2',
-    'primary-darken-1': '#3700B3',
-    secondary: '#03DAC6',
-    error: '#CF6679',
-    info: '#2196F3',
-    success: '#4CAF50',
-    warning: '#FB8C00',
-  }
-}
-
 const vuetify = createVuetify({
-  blueprint: md3, // <--- 2. ADD THIS LINE
   components,
   directives,
   theme: {
-    defaultTheme: 'myCustomTheme',
+    defaultTheme: 'light',
     themes: {
-      myCustomTheme,
-    }
-  }
+      light: { colors: { primary: '#1976D2', secondary: '#424242' } },
+      dark: { colors: { primary: '#2196F3', secondary: '#424242' } },
+    },
+  },
+  icons: {
+    defaultSet: 'mdi',
+    aliases,
+    sets: { mdi },
+  },
 })
 
-createApp(App).use(vuetify).mount('#app')
+const app = createApp(App)
+
+app.use(createPinia()) // [!code ++]
+app.use(router) // [!code ++]
+app.use(vuetify)
+
+app.mount('#app')
