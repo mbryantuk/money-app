@@ -23,6 +23,10 @@ const expenses = ref([]);
 const selectedExpenses = ref([]);
 const search = ref(''); 
 
+// UNDO / REDO STATE
+const history = ref([]);
+const future = ref([]);
+
 // Standardized Columns
 const columns = ref([
   { key: 'select', label: '', width: '40px', align: 'center', sortable: false },
@@ -68,10 +72,7 @@ const formattedMonth = computed(() => {
 const totalExpenses = computed(() => expenses.value.reduce((acc, item) => acc + Number(item.amount), 0));
 const paidExpenses = computed(() => expenses.value.filter(item => item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
 const leftToPay = computed(() => expenses.value.filter(item => !item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
-
-// Logic: Balance - Expenses = Projected (Assumes positive inputs)
 const projectedBalance = computed(() => Number(balance.value) - Number(leftToPay.value));
-
 const progressPercentage = computed(() => totalExpenses.value === 0 ? 0 : Math.round((Math.abs(paidExpenses.value) / Math.abs(totalExpenses.value)) * 100));
 const selectedTotal = computed(() => expenses.value.filter(item => selectedExpenses.value.includes(item.id)).reduce((sum, item) => sum + Number(item.amount), 0));
 const breakdownByWho = computed(() => {
@@ -93,23 +94,77 @@ const filteredExpenses = computed(() => {
     });
 });
 
-// ACTIONS
-const fetchData = async () => {
-    const res = await axios.get(`${API_URL}/data`, { params: { month: props.month } });
-    balance.value = parseFloat(res.data.balance) || 0;
-    salary.value = parseFloat(res.data.salary) || props.defaultSalary;
-    
-    // FORCE POSITIVE AMOUNTS ON LOAD
-    expenses.value = (res.data.expenses || []).map(e => ({
-        ...e,
-        amount: Math.abs(parseFloat(e.amount))
-    }));
-    
-    selectedExpenses.value = [];
+// --- UNDO / REDO LOGIC ---
+const createSnapshot = () => {
+    return JSON.stringify({
+        balance: balance.value,
+        salary: salary.value,
+        expenses: expenses.value
+    });
 };
 
-const updateBalance = async () => { await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) }); emit('notify', 'Balance Saved'); };
-const updateSalary = async () => { await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) }); emit('notify', 'Salary Logged'); };
+const saveToHistory = () => {
+    history.value.push(createSnapshot());
+    future.value = []; 
+    if (history.value.length > 20) history.value.shift();
+};
+
+const performUndo = async () => {
+    if (!history.value.length) return;
+    const previous = JSON.parse(history.value.pop());
+    future.value.push(createSnapshot()); 
+    await applySnapshot(previous);
+    emit('notify', 'Undo successful');
+};
+
+const performRedo = async () => {
+    if (!future.value.length) return;
+    const next = JSON.parse(future.value.pop());
+    history.value.push(createSnapshot()); 
+    await applySnapshot(next);
+    emit('notify', 'Redo successful');
+};
+
+const applySnapshot = async (state) => {
+    balance.value = state.balance;
+    salary.value = state.salary;
+    expenses.value = state.expenses;
+    try {
+        await axios.post(`${API_URL}/month/sync`, {
+            month: props.month,
+            balance: state.balance,
+            salary: state.salary,
+            expenses: state.expenses
+        });
+    } catch (e) {
+        console.error("Sync failed", e);
+        emit('notify', 'Error syncing undo', 'error');
+    }
+};
+
+// ACTIONS
+const fetchData = async () => {
+    // Add timestamp to bust browser cache
+    const res = await axios.get(`${API_URL}/data`, { params: { month: props.month, _t: Date.now() } });
+    
+    balance.value = parseFloat(res.data.balance) || 0;
+    salary.value = parseFloat(res.data.salary) || props.defaultSalary;
+    expenses.value = (res.data.expenses || []).map(e => ({...e, amount: Math.abs(parseFloat(e.amount))}));
+    selectedExpenses.value = [];
+    history.value = [];
+    future.value = [];
+};
+
+const updateBalance = async () => { 
+    saveToHistory();
+    await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) }); 
+    emit('notify', 'Balance Saved'); 
+};
+const updateSalary = async () => { 
+    saveToHistory();
+    await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) }); 
+    emit('notify', 'Salary Logged'); 
+};
 
 const changeMonth = (offset) => {
     const [y, m] = props.month.split('-').map(Number);
@@ -119,29 +174,47 @@ const changeMonth = (offset) => {
 
 const initMonth = async (source) => {
     if(!confirm("Initialize month?")) return;
+    saveToHistory();
     const [y, m] = props.month.split('-').map(Number);
     const pd = new Date(y, m - 2, 1);
     await axios.post(`${API_URL}/month/init`, { month: props.month, source, previousMonth: `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}` });
     fetchData();
 };
 
-const resetMonth = async () => { if(confirm("Delete ALL data?")) { await axios.delete(`${API_URL}/month`, { params: { month: props.month } }); fetchData(); } };
+const resetMonth = async () => { 
+    if(!confirm("Delete ALL data?")) return;
+    saveToHistory();
+    await axios.delete(`${API_URL}/month`, { params: { month: props.month } }); 
+    fetchData(); 
+};
 
 const addExpense = async () => {
     if(!newExpense.value.name || !newExpense.value.amount) return;
+    saveToHistory();
     await axios.post(`${API_URL}/expenses`, { ...newExpense.value, month: props.month, amount: Math.abs(parseFloat(newExpense.value.amount)) });
     newExpense.value.name = ''; newExpense.value.amount = ''; 
     fetchData();
 };
 
 const togglePaid = async (item) => {
+    saveToHistory();
     item.paid = !item.paid;
     item.paid_at = item.paid ? new Date().toISOString() : null;
     await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid });
 };
 
-// Spreadsheet Auto-save
 const updateItem = async (item) => {
+    try {
+        await axios.put(`${API_URL}/expenses/${item.id}`, item);
+    } catch (e) {
+        emit('notify', 'Error saving item', 'error');
+    }
+};
+
+const updateCell = async (item, key, value) => {
+    if (item[key] === value) return; 
+    saveToHistory();
+    item[key] = value; 
     try {
         await axios.put(`${API_URL}/expenses/${item.id}`, item);
     } catch (e) {
@@ -152,6 +225,7 @@ const updateItem = async (item) => {
 const deleteSelected = async () => {
     if(!selectedExpenses.value.length) return;
     if(!confirm(`Delete ${selectedExpenses.value.length} items?`)) return;
+    saveToHistory();
     try {
         await Promise.all(selectedExpenses.value.map(id => axios.delete(`${API_URL}/expenses/${id}`)));
         selectedExpenses.value = []; fetchData(); emit('notify', 'Items deleted');
@@ -160,7 +234,6 @@ const deleteSelected = async () => {
 
 const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
 
-// --- HELPERS ---
 const getStringHue = (str) => { let hash = 0; if(!str) return 0; for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash); return Math.abs(hash % 360); };
 const getRowStyle = (ex) => {
     const style = { transition: 'background-color 0.2s ease' };
@@ -179,8 +252,21 @@ onMounted(fetchData);
 
 <template>
     <div>
-        <v-card class="mb-6 rounded-xl mx-auto text-center" elevation="2" max-width="600">
-            <div class="d-flex align-center justify-space-between pa-2">
+        <v-card class="mb-6 rounded-xl mx-auto text-center position-relative" elevation="2" max-width="600">
+            <div class="position-absolute left-0 top-0 ma-2 d-flex">
+                <v-tooltip text="Undo" location="top">
+                    <template v-slot:activator="{ props }">
+                        <v-btn v-bind="props" icon="mdi-undo" variant="text" size="small" :disabled="!history.length" @click="performUndo"></v-btn>
+                    </template>
+                </v-tooltip>
+                <v-tooltip text="Redo" location="top">
+                    <template v-slot:activator="{ props }">
+                        <v-btn v-bind="props" icon="mdi-redo" variant="text" size="small" :disabled="!future.length" @click="performRedo"></v-btn>
+                    </template>
+                </v-tooltip>
+            </div>
+
+            <div class="d-flex align-center justify-space-between pa-2 pt-4">
                 <div style="width: 40px"></div>
                 <div class="d-flex align-center">
                     <v-btn icon="mdi-chevron-left" @click="changeMonth(-1)" variant="text" size="large" color="primary"></v-btn>
@@ -205,31 +291,67 @@ onMounted(fetchData);
         <div v-else>
             <v-row class="mb-4">
                 <v-col cols="12" sm="3">
-                    <v-card class="h-100 rounded-lg pa-4 text-center">
-                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis">Salary</div>
-                        <v-text-field v-model.number="salary" prefix="£" variant="plain" density="compact" class="text-h5 font-weight-bold centered-input mt-0" @keydown.enter="updateSalary" @blur="updateSalary" inputmode="decimal" hide-details></v-text-field>
+                    <v-card class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" elevation="2">
+                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-1">Income</div>
+                        <v-text-field 
+                            :model-value="salary" 
+                            @update:model-value="v => { salary=v; updateSalary() }" 
+                            prefix="£" 
+                            variant="plain" 
+                            density="compact" 
+                            bg-color="transparent"
+                            class="text-h4 font-weight-bold centered-input minimal-input" 
+                            inputmode="decimal" 
+                            hide-details
+                            single-line
+                        ></v-text-field>
                     </v-card>
                 </v-col>
+
                 <v-col cols="12" sm="3">
-                    <v-card class="h-100 rounded-lg pa-4 text-center" :color="balance < 0 ? 'red-lighten-5' : undefined">
-                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis">Current Balance</div>
-                        <v-text-field v-model.number="balance" prefix="£" variant="plain" density="compact" class="text-h5 font-weight-black centered-input mt-0" @keydown.enter="updateBalance" @blur="updateBalance" inputmode="decimal" hide-details></v-text-field>
+                    <v-card class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" elevation="2">
+                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-1">Balance</div>
+                        <v-text-field 
+                            :model-value="balance" 
+                            @update:model-value="v => { balance=v; updateBalance() }" 
+                            prefix="£" 
+                            variant="plain" 
+                            density="compact"
+                            bg-color="transparent"
+                            :color="balance < 0 ? 'error' : 'primary'"
+                            class="text-h4 font-weight-black centered-input minimal-input" 
+                            inputmode="decimal" 
+                            hide-details
+                            single-line
+                        ></v-text-field>
                     </v-card>
                 </v-col>
+
                 <v-col cols="12" sm="3">
-                    <v-card class="h-100 rounded-lg pa-4 text-center" :color="projectedBalance < 0 ? 'red-lighten-5' : undefined">
-                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis">Projected Left</div>
-                        <div class="text-h5 font-weight-black mt-2">£{{ projectedBalance.toFixed(2) }}</div>
-                        <v-progress-linear v-model="progressPercentage" height="6" rounded class="mt-2" striped :color="projectedBalance < 0 ? 'red' : 'green'"></v-progress-linear>
-                    </v-card>
-                </v-col>
-                <v-col cols="12" sm="3">
-                    <v-card class="h-100 rounded-lg pa-4">
-                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-2">Unpaid Total</div>
-                        <div v-for="(amt, p) in breakdownByWho" :key="p" class="d-flex justify-space-between border-b py-1">
-                            <span class="text-caption font-weight-bold" :style="{ color: getChipColor(p) }">{{p}}</span>
-                            <span class="text-caption font-monospace">£{{amt.toFixed(2)}}</span>
+                    <v-card 
+                        class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" 
+                        elevation="2"
+                        :color="projectedBalance < 0 ? 'red-lighten-4' : 'green-lighten-4'"
+                    >
+                        <div :class="projectedBalance < 0 ? 'text-red-darken-4' : 'text-green-darken-4'" class="text-caption text-uppercase font-weight-bold mb-1">
+                            Projected Left
                         </div>
+                        <div :class="projectedBalance < 0 ? 'text-red-darken-4' : 'text-green-darken-4'" class="text-h4 font-weight-black">
+                            £{{ projectedBalance.toFixed(2) }}
+                        </div>
+                    </v-card>
+                </v-col>
+
+                <v-col cols="12" sm="3">
+                    <v-card class="h-100 rounded-lg pa-4" elevation="2">
+                        <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-2">Unpaid Total</div>
+                        <div v-if="Object.keys(breakdownByWho).length" class="overflow-y-auto" style="max-height: 80px;">
+                            <div v-for="(amt, p) in breakdownByWho" :key="p" class="d-flex justify-space-between border-b py-1">
+                                <span class="text-caption font-weight-bold" :style="{ color: getChipColor(p) }">{{p}}</span>
+                                <span class="text-caption font-monospace font-weight-bold">£{{amt.toFixed(2)}}</span>
+                            </div>
+                        </div>
+                        <div v-else class="text-caption text-grey text-center mt-2">All paid!</div>
                     </v-card>
                 </v-col>
             </v-row>
@@ -279,19 +401,19 @@ onMounted(fetchData);
                                 </div>
                                 
                                 <div v-else-if="col.key === 'who'">
-                                    <v-select v-model="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="updateItem(ex)"></v-select>
+                                    <v-select :model-value="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="v => updateCell(ex, 'who', v)"></v-select>
                                 </div>
                                 
                                 <div v-else-if="col.key === 'name'">
-                                    <v-text-field v-model="ex.name" density="compact" variant="plain" hide-details single-line @change="updateItem(ex)"></v-text-field>
+                                    <v-text-field :model-value="ex.name" density="compact" variant="plain" hide-details single-line @update:model-value="v => updateCell(ex, 'name', v)"></v-text-field>
                                 </div>
                                 
                                 <div v-else-if="col.key === 'amount'">
-                                    <v-text-field v-model.number="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @change="updateItem(ex)"></v-text-field>
+                                    <v-text-field :model-value="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @update:model-value="v => updateCell(ex, 'amount', Number(v))"></v-text-field>
                                 </div>
                                 
                                 <div v-else-if="col.key === 'category'">
-                                    <v-select v-model="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="updateItem(ex)"></v-select>
+                                    <v-select :model-value="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="v => updateCell(ex, 'category', v)"></v-select>
                                 </div>
                             </td>
                         </tr>
@@ -299,7 +421,7 @@ onMounted(fetchData);
                 </v-table>
             </v-card>
 
-            <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-inverse-surface d-flex align-center justify-center" style="z-index: 100; max-width: 500px; margin: 0 auto 20px auto !important;">
+            <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-inverse-surface d-flex align-center justify-center" style="z-index: 100; max-width: 400px; margin: 0 auto 20px auto !important;">
                 <span class="font-weight-bold mr-4">{{selectedExpenses.length}} Selected</span>
                 <span class="text-h6 font-weight-black mr-4">£{{selectedTotal.toFixed(2)}}</span>
                 <v-btn icon="mdi-delete" color="error" variant="text" class="mr-2" @click="deleteSelected"></v-btn>
@@ -314,6 +436,11 @@ onMounted(fetchData);
 .font-monospace { font-family: 'Roboto Mono', monospace; }
 .cursor-move { cursor: move; }
 .resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
+
+/* Minimalist Input Styles for Summary/Table */
+.minimal-input :deep(.v-field__outline) { display: none; }
+.minimal-input :deep(.v-field:hover .v-field__outline) { display: block; opacity: 0.2; }
+.minimal-input :deep(.v-field--focused .v-field__outline) { display: block; opacity: 0.5; }
 
 :deep(.v-field--variant-plain .v-field__overlay) { display: none; }
 :deep(.v-field--variant-plain:hover .v-field__overlay) { display: block; opacity: 0.05; }

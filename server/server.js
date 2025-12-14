@@ -18,6 +18,9 @@ db.serialize(() => {
     // --- CREDIT CARDS ---
     db.run(`CREATE TABLE IF NOT EXISTS credit_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, limit_amount REAL, interest_rate REAL, balance REAL)`);
     db.run(`CREATE TABLE IF NOT EXISTS cc_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, card_id INTEGER, date TEXT, description TEXT, amount REAL, category TEXT, paid INTEGER DEFAULT 0)`);
+    // --- MEAL PLANNER ---
+    db.run(`CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, tags TEXT)`);
+    db.run(`CREATE TABLE IF NOT EXISTS meal_plan (date TEXT PRIMARY KEY, meal_id INTEGER)`);
 });
 
 // --- DATA ENDPOINTS ---
@@ -47,6 +50,71 @@ app.post('/api/balance', (req, res) => {
 app.post('/api/salary', (req, res) => {
     const { month, amount } = req.body;
     db.run(`INSERT INTO monthly_balances (month, salary) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET salary=excluded.salary`, [month, amount], () => res.json({ success: true }));
+});
+
+// --- MEAL PLANNER ENDPOINTS ---
+app.get('/api/meals', (req, res) => {
+    db.all("SELECT * FROM meals ORDER BY name ASC", (err, rows) => {
+        const meals = rows ? rows.map(m => ({ ...m, tags: JSON.parse(m.tags || '[]') })) : [];
+        res.json(meals);
+    });
+});
+
+app.post('/api/meals', (req, res) => {
+    const { name, description, tags } = req.body;
+    db.run("INSERT INTO meals (name, description, tags) VALUES (?, ?, ?)", 
+        [name, description, JSON.stringify(tags || [])], 
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID, success: true });
+        }
+    );
+});
+
+app.put('/api/meals/:id', (req, res) => {
+    const { name, description, tags } = req.body;
+    db.run("UPDATE meals SET name = ?, description = ?, tags = ? WHERE id = ?", 
+        [name, description, JSON.stringify(tags || []), req.params.id], 
+        (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.delete('/api/meals/:id', (req, res) => {
+    db.serialize(() => {
+        db.run("DELETE FROM meal_plan WHERE meal_id = ?", [req.params.id]);
+        db.run("DELETE FROM meals WHERE id = ?", [req.params.id]);
+    });
+    res.json({ success: true });
+});
+
+app.get('/api/meal-plan', (req, res) => {
+    const { start, end } = req.query;
+    const sql = `
+        SELECT p.date, p.meal_id, m.name, m.description, m.tags 
+        FROM meal_plan p 
+        LEFT JOIN meals m ON p.meal_id = m.id 
+        WHERE p.date BETWEEN ? AND ?
+    `;
+    db.all(sql, [start, end], (err, rows) => {
+        const plan = rows ? rows.map(r => ({ ...r, tags: JSON.parse(r.tags || '[]') })) : [];
+        res.json(plan);
+    });
+});
+
+app.post('/api/meal-plan', (req, res) => {
+    const { date, meal_id } = req.body;
+    db.run("INSERT INTO meal_plan (date, meal_id) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET meal_id=excluded.meal_id", 
+        [date, meal_id], 
+        () => res.json({ success: true })
+    );
+});
+
+app.delete('/api/meal-plan', (req, res) => {
+    const { date } = req.query;
+    db.run("DELETE FROM meal_plan WHERE date = ?", [date], () => res.json({ success: true }));
 });
 
 // --- CREDIT CARDS ENDPOINTS ---
@@ -90,8 +158,6 @@ app.post('/api/credit-cards/:id/transactions', (req, res) => {
     );
 });
 
-// --- NEW TRANSACTION ENDPOINTS (Corrected) ---
-
 // Edit Transaction
 app.put('/api/cc_transactions/:id', (req, res) => {
     const { date, description, amount, category } = req.body;
@@ -127,7 +193,7 @@ app.get('/api/admin/data', (req, res) => {
     });
 });
 
-const ALLOWED_TABLES = ['expenses', 'monthly_balances', 'settings', 'expense_templates', 'savings_accounts', 'savings_pots', 'sandbox_expenses', 'sandbox_profiles', 'christmas_list', 'credit_cards', 'cc_transactions'];
+const ALLOWED_TABLES = ['expenses', 'monthly_balances', 'settings', 'expense_templates', 'savings_accounts', 'savings_pots', 'sandbox_expenses', 'sandbox_profiles', 'christmas_list', 'credit_cards', 'cc_transactions', 'meals', 'meal_plan'];
 
 app.get('/api/admin/table/:name', (req, res) => {
     if (!ALLOWED_TABLES.includes(req.params.name)) return res.status(403).json({ error: "Invalid table" });
