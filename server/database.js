@@ -37,25 +37,17 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS credit_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, limit_amount REAL, interest_rate REAL, balance REAL)`);
     db.run(`CREATE TABLE IF NOT EXISTS cc_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, card_id INTEGER, date TEXT, description TEXT, amount REAL, category TEXT, paid INTEGER DEFAULT 0)`);
     
-    // --- MEAL PLANNER FIX ---
+    // Meal Planner
     db.run(`CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, tags TEXT, type TEXT)`);
-    
-    // Fix: Re-create meal_plan if it doesn't have 'slot' column (Old schema had date as PK)
-    db.run(`CREATE TABLE IF NOT EXISTS meal_plan_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT, 
-        slot TEXT, 
-        meal_id INTEGER, 
-        who TEXT
-    )`);
+    // Ensure correct schema for meal_plan
+    db.run(`CREATE TABLE IF NOT EXISTS meal_plan (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, slot TEXT, meal_id INTEGER, who TEXT)`);
 
-    // Check if we need to migrate (Simple check: if old table exists and is weird, we swap. For now, strict Ensure)
-    // We will attempt to add columns if they are missing, but since the PK was wrong on the old table, 
-    // it is safer to just ensure the correct structure exists.
-    // If you have issues with "Menus not adding", it's likely the PK constraint.
-    // This command ensures the table has the right columns if creating from scratch.
-    // Use the route logic to handle the rest.
-    
+    // --- DATA NORMALIZATION (Ensure Positive Numbers) ---
+    // Convert all negative expense amounts to positive
+    db.run("UPDATE expenses SET amount = ABS(amount) WHERE amount < 0");
+    db.run("UPDATE expense_templates SET amount = ABS(amount) WHERE amount < 0");
+    db.run("UPDATE sandbox_expenses SET amount = ABS(amount) WHERE amount < 0");
+
     // Seed Settings
     const seedSettings = [
         { key: 'default_salary', value: '2500' },

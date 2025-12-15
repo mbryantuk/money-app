@@ -137,24 +137,12 @@
   };
 
   // --- AI LOGIC ---
-  let aiAbortController = null; // Store controller instance
-
   const isAiAvailable = computed(() => {
-    // Only available if enabled and on a supported tab
     return aiEnabled.value && ['dashboard', 'budget', 'savings', 'credit_cards', 'mortgage', 'meals', 'birthdays', 'christmas', 'sandbox'].includes(tab.value);
   });
 
   const generateAiSummary = async (isBackground = false) => {
-    // Stop if disabled
     if (!aiEnabled.value) return;
-
-    // 1. CANCEL PREVIOUS REQUEST
-    if (aiAbortController) {
-        aiAbortController.abort();
-    }
-    // 2. Create new controller
-    aiAbortController = new AbortController();
-    const signal = aiAbortController.signal;
 
     if (!isBackground) showAiDialog.value = true;
     
@@ -178,9 +166,7 @@
     else { type = tab.value; }
 
     try {
-        // 3. Pass signal to axios
-        const res = await axios.post('/api/ai/generate', { type, params }, { signal });
-        
+        const res = await axios.post('/api/ai/generate', { type, params });
         if (res.data.success) {
             aiResponse.value = res.data.response;
             aiHasResponse.value = true;
@@ -188,17 +174,11 @@
             aiError.value = res.data.error || 'Unknown AI Error';
             if (!isBackground) aiResponse.value = "Error: " + aiError.value;
         }
-        aiLoading.value = false; // Finish success
     } catch (e) {
-        // 4. Handle Cancellation silently
-        if (axios.isCancel(e)) {
-            console.log('AI Request cancelled due to navigation');
-            return; // Exit without changing state (let the new request handle it)
-        }
-        
         console.error(e);
         aiError.value = 'Failed to connect to AI server.';
-        aiLoading.value = false; // Finish error
+    } finally {
+        aiLoading.value = false;
     }
   };
 
@@ -263,11 +243,9 @@
       defaultSalary.value = parseFloat(settings.default_salary) || 0;
       payDay.value = parseInt(settings.pay_day) || 1;
       
-      // Load AI Settings
       ollamaUrl.value = settings.ollama_url || '';
       ollamaModel.value = settings.ollama_model || '';
       
-      // Check for boolean string or true boolean
       if (settings.ai_enabled === undefined) {
           aiEnabled.value = true; 
       } else {
@@ -295,13 +273,11 @@
   
   // --- WATCHERS ---
   watch(tab, (newVal) => {
-      // 1. Reset State
       aiResponse.value = '';
       aiError.value = '';
       aiHasResponse.value = false;
       showAiDialog.value = false; 
 
-      // 2. Trigger Background Run (will cancel previous due to updated logic)
       if (isAiAvailable.value) {
           generateAiSummary(true); 
       }
@@ -426,7 +402,15 @@
               @notify="showMsg" 
               @refresh="fetchSettings" 
           />
-          <TemplatesTab v-if="tab === 'templates'" :people="availablePeople" :categories="availableCategories" :templates="templates" @notify="showMsg" @refresh="fetchSettings" />
+          <TemplatesTab 
+              v-if="tab === 'templates'" 
+              :people="availablePeople" 
+              :categories="availableCategories" 
+              :templates="templates" 
+              :current-month="currentMonth"
+              @notify="showMsg" 
+              @refresh="fetchSettings" 
+          />
         </v-container>
       </v-main>
       

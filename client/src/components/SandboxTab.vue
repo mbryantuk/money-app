@@ -54,8 +54,9 @@ const deleteProfile = async (id) => { if(confirm("Delete?")) { await axios.delet
 const startEdit = (i) => { editingId.value = i.id; editForm.value = {...i}; };
 const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
 
-const total = computed(() => expenses.value.reduce((a,c) => a + c.amount, 0));
-const calculatedResult = computed(() => salary.value - expenses.value.reduce((a,c) => a + Number(c.amount), 0));
+// CALCULATION LOGIC: Income - Expenses (Expenses are positive numbers)
+const total = computed(() => expenses.value.reduce((a,c) => a + Math.abs(c.amount), 0));
+const calculatedResult = computed(() => salary.value - total.value);
 
 const filteredExpenses = computed(() => {
     let items = expenses.value;
@@ -73,7 +74,8 @@ onMounted(fetchSandbox);
 <template>
     <div>
         <v-alert icon="mdi-test-tube" title="Sandbox Mode" variant="tonal" color="deep-purple-accent-2" class="mb-6">
-            Isolate scenario testing. <template #append><v-btn @click="importMonth" color="deep-purple-darken-1">Clone Current Month</v-btn></template>
+            Isolate scenario testing. Expenses are deducted from Income.
+            <template #append><v-btn @click="importMonth" color="deep-purple-darken-1">Clone Current Month</v-btn></template>
         </v-alert>
 
         <v-card class="pa-4 mb-4" border>
@@ -85,7 +87,7 @@ onMounted(fetchSandbox);
             <v-col cols="6"><v-card class="pa-4"><div class="text-overline">Income</div><v-text-field v-model.number="salary" prefix="£" variant="underlined" class="text-h5 font-weight-bold"></v-text-field></v-card></v-col>
             <v-col cols="6">
                 <v-card class="pa-4" :color="calculatedResult < 0 ? (isDark ? 'red-darken-4' : 'red-lighten-5') : (isDark ? 'green-darken-4' : 'green-lighten-5')">
-                    <div class="text-overline">Result</div><div class="text-h5 font-weight-black">£{{ calculatedResult.toFixed(2) }}</div>
+                    <div class="text-overline">Result (Income - Costs)</div><div class="text-h5 font-weight-black">£{{ calculatedResult.toFixed(2) }}</div>
                 </v-card>
             </v-col>
         </v-row>
@@ -116,7 +118,7 @@ onMounted(fetchSandbox);
                 <tbody>
                     <tr v-for="ex in filteredExpenses" :key="ex.id">
                         <td v-for="col in columns" :key="col.key" :class="'text-'+col.align">
-                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined" hide-details></v-select><span v-else>{{ex.who}}</span></div>
+                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined"></v-select><span v-else>{{ex.who}}</span></div>
                             <div v-else-if="col.key === 'vendor'"><v-text-field v-if="editingId===ex.id" v-model="editForm.vendor" density="compact" variant="outlined" hide-details></v-text-field><span v-else>{{ex.vendor}}</span></div>
                             <div v-else-if="col.key === 'name'"><v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined" hide-details></v-text-field><span v-else>{{ex.name}}</span></div>
                             <div v-else-if="col.key === 'expected_date'"><v-text-field v-if="editingId===ex.id" v-model="editForm.expected_date" density="compact" variant="outlined" hide-details type="number"></v-text-field><span v-else>{{ex.expected_date}}</span></div>
@@ -128,7 +130,7 @@ onMounted(fetchSandbox);
                             </div>
                         </td>
                     </tr>
-                    <tr class="font-weight-bold" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'"><td :colspan="columns.length - 2">TOTAL</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
+                    <tr class="font-weight-bold" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'"><td :colspan="columns.length - 2">TOTAL EXPENSES</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
                 </tbody>
             </v-table>
             <v-card-actions class="justify-end"><v-btn color="error" @click="clear">Clear All</v-btn></v-card-actions>
