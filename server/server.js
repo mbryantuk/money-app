@@ -15,13 +15,28 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS sandbox_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, amount REAL, category TEXT, who TEXT, paid INTEGER DEFAULT 0)`);
     db.run(`CREATE TABLE IF NOT EXISTS sandbox_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, salary REAL, items TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS christmas_list (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT, item TEXT, amount REAL, bought INTEGER DEFAULT 0)`);
-    // --- CREDIT CARDS ---
     db.run(`CREATE TABLE IF NOT EXISTS credit_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, limit_amount REAL, interest_rate REAL, balance REAL)`);
     db.run(`CREATE TABLE IF NOT EXISTS cc_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, card_id INTEGER, date TEXT, description TEXT, amount REAL, category TEXT, paid INTEGER DEFAULT 0)`);
-    // --- MEAL PLANNER ---
     db.run(`CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, tags TEXT)`);
-    db.run(`CREATE TABLE IF NOT EXISTS meal_plan (date TEXT PRIMARY KEY, meal_id INTEGER)`);
-    // Note: birthdays created in database.js
+    
+    // --- MIGRATION FOR MEAL PLAN (Resetting to support Breakfast/Lunch/Dinner) ---
+    // We check if the table has the old schema (date as PK) and drop it to recreate with 'slot' support
+    // This is a simple migration strategy for this dev app.
+    db.get("PRAGMA table_info(meal_plan)", (err, rows) => {
+        // If we don't see the 'slot' column, we recreate the table
+        const hasSlot = rows && rows.some && rows.some(r => r.name === 'slot');
+        if (!hasSlot) {
+            db.run("DROP TABLE IF EXISTS meal_plan"); 
+            db.run(`CREATE TABLE meal_plan (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                date TEXT, 
+                slot TEXT, 
+                meal_id INTEGER, 
+                who TEXT,
+                UNIQUE(date, slot)
+            )`);
+        }
+    });
 });
 
 // --- DATA ENDPOINTS ---
@@ -109,29 +124,34 @@ app.delete('/api/meals/:id', (req, res) => {
 
 app.get('/api/meal-plan', (req, res) => {
     const { start, end } = req.query;
+    // Updated query to include 'id' and 'slot'
     const sql = `
-        SELECT p.date, p.meal_id, m.name, m.description, m.tags 
+        SELECT p.id, p.date, p.slot, p.meal_id, p.who, m.name, m.description, m.tags 
         FROM meal_plan p 
         LEFT JOIN meals m ON p.meal_id = m.id 
         WHERE p.date BETWEEN ? AND ?
     `;
     db.all(sql, [start, end], (err, rows) => {
-        const plan = rows ? rows.map(r => ({ ...r, tags: JSON.parse(r.tags || '[]') })) : [];
+        const plan = rows ? rows.map(r => ({ 
+            ...r, 
+            tags: JSON.parse(r.tags || '[]'),
+            who: JSON.parse(r.who || '[]')
+        })) : [];
         res.json(plan);
     });
 });
 
 app.post('/api/meal-plan', (req, res) => {
-    const { date, meal_id } = req.body;
-    db.run("INSERT INTO meal_plan (date, meal_id) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET meal_id=excluded.meal_id", 
-        [date, meal_id], 
+    const { date, slot, meal_id, who } = req.body;
+    // Upsert based on date AND slot
+    db.run("INSERT INTO meal_plan (date, slot, meal_id, who) VALUES (?, ?, ?, ?) ON CONFLICT(date, slot) DO UPDATE SET meal_id=excluded.meal_id, who=excluded.who", 
+        [date, slot, meal_id, JSON.stringify(who || [])], 
         () => res.json({ success: true })
     );
 });
 
-app.delete('/api/meal-plan', (req, res) => {
-    const { date } = req.query;
-    db.run("DELETE FROM meal_plan WHERE date = ?", [date], () => res.json({ success: true }));
+app.delete('/api/meal-plan/:id', (req, res) => {
+    db.run("DELETE FROM meal_plan WHERE id = ?", [req.params.id], () => res.json({ success: true }));
 });
 
 // --- CREDIT CARDS ENDPOINTS ---
@@ -175,7 +195,6 @@ app.post('/api/credit-cards/:id/transactions', (req, res) => {
     );
 });
 
-// Edit Transaction
 app.put('/api/cc_transactions/:id', (req, res) => {
     const { date, description, amount, category } = req.body;
     db.run("UPDATE cc_transactions SET date = ?, description = ?, amount = ?, category = ? WHERE id = ?", 
@@ -184,13 +203,11 @@ app.put('/api/cc_transactions/:id', (req, res) => {
     );
 });
 
-// Toggle Paid Status
 app.post('/api/cc_transactions/:id/toggle', (req, res) => {
     const { paid } = req.body;
     db.run("UPDATE cc_transactions SET paid = ? WHERE id = ?", [paid ? 1 : 0, req.params.id], () => res.json({ success: true }));
 });
 
-// "Pay" endpoint: Clears transactions and updates balance
 app.post('/api/credit-cards/:id/pay', (req, res) => {
     const { clearBalance } = req.body; 
     db.serialize(() => {
@@ -201,7 +218,6 @@ app.post('/api/credit-cards/:id/pay', (req, res) => {
     });
     res.json({ success: true });
 });
-
 
 // --- ADMIN ENDPOINTS ---
 app.get('/api/admin/data', (req, res) => {
@@ -289,16 +305,12 @@ app.delete('/api/templates/:id', (req, res) => db.run("DELETE FROM expense_templ
 
 // --- EXPENSES ---
 app.post('/api/expenses', (req, res) => { const { name, amount, category, who, month } = req.body; db.run("INSERT INTO expenses (name, amount, category, who, month, paid) VALUES (?, ?, ?, ?, ?, 0)", [name, amount, category, who, month], function() { res.json({ id: this.lastID }); });});
-
-// Toggle Paid Status & Timestamp
 app.post('/api/expenses/:id/toggle', (req, res) => { 
     const { paid } = req.body;
     const paidAt = paid ? new Date().toISOString() : null; 
     db.run("UPDATE expenses SET paid = ?, paid_at = ? WHERE id = ?", [paid ? 1 : 0, paidAt, req.params.id], () => res.json({ success: true }));
 });
-
 app.put('/api/expenses/:id', (req, res) => { const { name, amount, category, who } = req.body; db.run("UPDATE expenses SET name = ?, amount = ?, category = ?, who = ? WHERE id = ?", [name, amount, category, who, req.params.id], () => res.json({ success: true }));});
-
 app.delete('/api/expenses/:id', (req, res) => db.run("DELETE FROM expenses WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
 // --- MONTH MGMT ---
@@ -337,7 +349,6 @@ app.post('/api/mortgage', (req, res) => {
 app.get('/api/dashboard', (req, res) => {
     const startYear = parseInt(req.query.year);
     if (!startYear) return res.status(400).json({ error: "Year required" });
-
     const months = [];
     for (let i = 0; i < 12; i++) {
         const d = new Date(startYear, 3 + i, 1); 
@@ -346,61 +357,23 @@ app.get('/api/dashboard', (req, res) => {
         months.push(`${y}-${m}`);
     }
     const placeholders = months.map(() => '?').join(',');
-    
-    const response = {
-        totalIncome: 0, totalExpenses: 0, categoryBreakdown: [], monthlyTrend: [], categoryTrend: [],
-        whoBreakdown: [], biggestExpenses: [] 
-    };
+    const response = { totalIncome: 0, totalExpenses: 0, categoryBreakdown: [], monthlyTrend: [], categoryTrend: [], whoBreakdown: [], biggestExpenses: [] };
 
-    // 1. Income (Sum)
     db.get(`SELECT sum(salary) as total FROM monthly_balances WHERE month IN (${placeholders})`, months, (err, row) => {
         response.totalIncome = row ? row.total : 0;
-
-        // 2. Category Breakdown (ABS Sum)
         db.all(`SELECT category, ABS(sum(amount)) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY category`, months, (err, rows) => {
             response.categoryBreakdown = rows || [];
             response.totalExpenses = response.categoryBreakdown.reduce((sum, item) => sum + item.total, 0);
-
-            // 3. Monthly Trend (ABS Sum for Expenses)
-            const sqlTrend = `
-                SELECT 
-                    e.month, 
-                    ABS(SUM(e.amount)) as expense_total, 
-                    (SELECT salary FROM monthly_balances WHERE month = e.month) as income_val 
-                FROM expenses e 
-                WHERE e.month IN (${placeholders}) 
-                GROUP BY e.month 
-                ORDER BY e.month ASC
-            `;
-            
+            const sqlTrend = `SELECT e.month, ABS(SUM(e.amount)) as expense_total, (SELECT salary FROM monthly_balances WHERE month = e.month) as income_val FROM expenses e WHERE e.month IN (${placeholders}) GROUP BY e.month ORDER BY e.month ASC`;
             db.all(sqlTrend, months, (err, rows) => {
                 response.monthlyTrend = rows || [];
-
-                // 4. Category Trend (ABS Sum)
-                const sqlCatTrend = `
-                    SELECT month, category, ABS(SUM(amount)) as total 
-                    FROM expenses 
-                    WHERE month IN (${placeholders}) 
-                    GROUP BY month, category 
-                    ORDER BY month ASC
-                `;
-                
+                const sqlCatTrend = `SELECT month, category, ABS(SUM(amount)) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY month, category ORDER BY month ASC`;
                 db.all(sqlCatTrend, months, (err, catRows) => {
                     response.categoryTrend = catRows || [];
-
-                    // 5. Who Spent What (ABS Sum)
                     const sqlWho = `SELECT who, ABS(SUM(amount)) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY who ORDER BY total DESC`;
                     db.all(sqlWho, months, (err, whoRows) => {
                         response.whoBreakdown = whoRows || [];
-
-                        // 6. Biggest Expenses (ABS Amount & Sort)
-                        const sqlBig = `
-                            SELECT name, ABS(amount) as amount, month, category 
-                            FROM expenses 
-                            WHERE month IN (${placeholders}) 
-                            ORDER BY ABS(amount) DESC 
-                            LIMIT 5
-                        `;
+                        const sqlBig = `SELECT name, ABS(amount) as amount, month, category FROM expenses WHERE month IN (${placeholders}) ORDER BY ABS(amount) DESC LIMIT 5`;
                         db.all(sqlBig, months, (err, bigRows) => {
                             response.biggestExpenses = bigRows || [];
                             res.json(response);
@@ -412,7 +385,7 @@ app.get('/api/dashboard', (req, res) => {
     });
 });
 
-// --- SAVINGS ---
+// --- SAVINGS, SANDBOX, CHRISTMAS (Existing) ---
 app.get('/api/savings/structure', (req, res) => {
     const query = `SELECT a.id as account_id, a.name as account_name, p.id as pot_id, p.name as pot_name, p.amount as pot_amount FROM savings_accounts a LEFT JOIN savings_pots p ON a.id = p.account_id`;
     db.all(query, (err, rows) => {
@@ -435,8 +408,6 @@ app.delete('/api/savings/accounts/:id', (req, res) => { db.serialize(() => { db.
 app.post('/api/savings/pots', (req, res) => { const { accountId, name, amount } = req.body; db.run("INSERT INTO savings_pots (account_id, name, amount) VALUES (?, ?, ?)", [accountId, name, amount || 0], function() { res.json({ id: this.lastID }); });});
 app.put('/api/savings/pots/:id', (req, res) => { const { name, amount } = req.body; db.run("UPDATE savings_pots SET name = ?, amount = ? WHERE id = ?", [name, amount, req.params.id], () => res.json({ success: true }));});
 app.delete('/api/savings/pots/:id', (req, res) => { db.run("DELETE FROM savings_pots WHERE id = ?", [req.params.id], () => res.json({ success: true }));});
-
-// --- SANDBOX & CHRISTMAS ---
 app.get('/api/sandbox', (req, res) => db.all("SELECT * FROM sandbox_expenses", (err, rows) => res.json(rows || [])));
 app.post('/api/sandbox', (req, res) => { const { name, amount, category, who } = req.body; db.run("INSERT INTO sandbox_expenses (name, amount, category, who, paid) VALUES (?, ?, ?, ?, 0)", [name, amount, category, who], function() { res.json({ id: this.lastID }); });});
 app.put('/api/sandbox/:id', (req, res) => { const { name, amount, category, who } = req.body; db.run("UPDATE sandbox_expenses SET name=?, amount=?, category=?, who=? WHERE id=?", [name, amount, category, who, req.params.id], () => res.json({ success: true }));});
@@ -464,7 +435,6 @@ app.post('/api/sandbox/profiles/:id/load', (req, res) => {
         });
     });
 });
-
 app.get('/api/christmas', (req, res) => db.all("SELECT * FROM christmas_list", (err, rows) => res.json(rows || [])));
 app.post('/api/christmas', (req, res) => { const { recipient, item, amount } = req.body; db.run("INSERT INTO christmas_list (recipient, item, amount, bought) VALUES (?, ?, ?, 0)", [recipient, item, amount], function() { res.json({ id: this.lastID }); });});
 app.put('/api/christmas/:id', (req, res) => { const { recipient, item, amount } = req.body; db.run("UPDATE christmas_list SET recipient=?, item=?, amount=? WHERE id=?", [recipient, item, amount, req.params.id], () => res.json({ success: true }));});

@@ -34,16 +34,17 @@
   const isDraggingCalc = ref(false);
   const calcDragOffset = ref({ x: 0, y: 0 });
 
-  // SAVINGS WIDGET STATE (Moved from BudgetTab)
+  // SAVINGS WIDGET STATE
   const showSavings = ref(false);
   const savingsAccounts = ref([]);
-  const savingsPos = ref({ x: 340, y: 100 }); // Offset slightly so it doesn't cover calc
+  const savingsPos = ref({ x: 340, y: 100 });
   const isDraggingSavings = ref(false);
   const savingsDragOffset = ref({ x: 0, y: 0 });
   
   // Data State
   const currentMonth = ref(new Date().toISOString().slice(0, 7));
-  const availablePeople = ref([]);
+  const availablePeople = ref([]); // Budget Accounts
+  const familyMembers = ref([]);   // Meal Plan People (NEW)
   const availableCategories = ref([]);
   const defaultSalary = ref(0);
   const payDay = ref(1);
@@ -74,7 +75,7 @@
     theme.global.name.value = isDark.value ? 'myCustomTheme' : 'dark';
   };
   
-  // --- SAVINGS LOGIC (Global) ---
+  // --- SAVINGS LOGIC ---
   const toggleSavings = async () => {
       if (!showSavings.value) {
           try {
@@ -91,6 +92,7 @@
       } catch (e) { showMsg('Error saving pot', 'error'); }
   };
 
+  // Dragging Logic
   const startDragSavings = (e) => {
       if(e.target.closest('.no-drag')) return; 
       isDraggingSavings.value = true;
@@ -204,8 +206,16 @@
         axios.get('/api/birthdays') 
       ]);
       const settings = settingsRes.data || {};
+      
+      // Load Budget Accounts
       if (settings.people) availablePeople.value = JSON.parse(settings.people);
+      
+      // Load Family Members (Meals) - Added this line
+      if (settings.family_members) familyMembers.value = JSON.parse(settings.family_members);
+      
+      // Load Categories
       if (settings.categories) availableCategories.value = JSON.parse(settings.categories);
+      
       defaultSalary.value = parseFloat(settings.default_salary) || 0;
       payDay.value = parseInt(settings.pay_day) || 1;
       templates.value = templatesRes.data || [];
@@ -302,14 +312,24 @@
           <SavingsTab v-if="tab === 'savings'" @notify="showMsg" />
           <CreditCardsTab v-if="tab === 'credit_cards'" @notify="showMsg" />
           <MortgageTab v-if="tab === 'mortgage'" @notify="showMsg" />
-          <MealsTab v-if="tab === 'meals'" />
+          <MealsTab v-if="tab === 'meals'" :people="familyMembers" @notify="showMsg" />
           <BirthdaysTab v-if="tab === 'birthdays'" @notify="showMsg" /> <ChristmasTab v-if="tab === 'christmas'" @notify="showMsg" />
           <ReportsTab v-if="tab === 'reports'" /> 
           <SandboxTab v-if="tab === 'sandbox'" :people="availablePeople" :categories="availableCategories" :current-month="currentMonth" @notify="showMsg" />
           
           <AdminTab v-if="tab.startsWith('admin_')" :view="tab" @notify="showMsg" />
           
-          <SettingsTab v-if="tab === 'settings'" v-model:people="availablePeople" v-model:categories="availableCategories" v-model:default-salary="defaultSalary" v-model:pay-day="payDay" :templates="templates" @notify="showMsg" @refresh="fetchSettings" />
+          <SettingsTab 
+              v-if="tab === 'settings'" 
+              v-model:people="availablePeople" 
+              v-model:family="familyMembers"
+              v-model:categories="availableCategories" 
+              v-model:default-salary="defaultSalary" 
+              v-model:pay-day="payDay" 
+              :templates="templates" 
+              @notify="showMsg" 
+              @refresh="fetchSettings" 
+          />
         </v-container>
       </v-main>
   
@@ -322,7 +342,7 @@
       >
           <div class="bg-primary text-white d-flex align-center justify-space-between pa-2 cursor-move" @mousedown="startDragSavings">
               <span class="text-subtitle-2 font-weight-bold ml-2"><v-icon size="small" class="mr-1">mdi-piggy-bank</v-icon> Savings</span>
-              <v-btn icon="mdi-close" variant="text" density="compact" size="small" @click="showSavings = false"></v-btn>
+              <v-btn icon="mdi-close" variant="text" density="compact" size="small" color="white" @click="showSavings = false"></v-btn>
           </div>
           
           <div class="overflow-y-auto pa-0 flex-grow-1 bg-surface">
@@ -372,8 +392,8 @@
         <v-card-title class="bg-primary text-white d-flex justify-space-between align-center py-2 text-subtitle-1 cursor-move" @mousedown="startDragCalc">
           Calculator 
           <div>
-            <v-btn icon="mdi-open-in-new" variant="text" density="compact" @click="popOutCalculator" class="mr-1" title="Pop out"></v-btn>
-            <v-btn icon="mdi-close" variant="text" density="compact" @click="showCalculator = false"></v-btn>
+            <v-btn icon="mdi-open-in-new" variant="text" density="compact" color="white" @click="popOutCalculator" class="mr-1" title="Pop out"></v-btn>
+            <v-btn icon="mdi-close" variant="text" density="compact" color="white" @click="showCalculator = false"></v-btn>
           </div>
         </v-card-title>
         <v-card-text class="pa-2 bg-surface">

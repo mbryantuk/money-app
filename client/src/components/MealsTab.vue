@@ -4,7 +4,7 @@
   
   // Props
   const props = defineProps({
-    people: Array // Receives 'family' from App.vue
+    people: { type: Array, default: () => [] } // Receives 'familyMembers' from App.vue
   });
 
   const emit = defineEmits(['notify']);
@@ -12,6 +12,7 @@
   // State
   const meals = ref([]);
   const plan = ref([]);
+  const slots = ['Breakfast', 'Lunch', 'Dinner'];
   
   // Library Dialog
   const dialog = ref(false);
@@ -20,7 +21,7 @@
 
   // Assignment Dialog
   const assignDialog = ref(false);
-  const assignForm = ref({ date: null, meal_id: null, who: [] });
+  const assignForm = ref({ date: null, slot: null, meal_id: null, who: [] });
   
   const weekOffset = ref(0);
   
@@ -61,26 +62,27 @@
   };
   
   // Actions
-  const getMealsForDate = (date) => {
-    return plan.value.filter(p => p.date === date);
+  const getMealForSlot = (date, slot) => {
+    return plan.value.find(p => p.date === date && p.slot === slot);
   };
 
-  const isDayComplete = (date) => {
-      const dayMeals = getMealsForDate(date);
-      if (dayMeals.length === 0) return false;
-      const coveredPeople = new Set();
-      dayMeals.forEach(m => {
-          if (Array.isArray(m.who)) {
-              m.who.forEach(p => coveredPeople.add(p));
-          }
-      });
-      // Use props.people (which acts as the family list here)
-      return props.people && props.people.length > 0 && props.people.every(p => coveredPeople.has(p));
+  // Check if every family member is covered for this specific meal slot
+  const isSlotComplete = (date, slot) => {
+      const meal = getMealForSlot(date, slot);
+      if (!meal) return false;
+      const whoList = meal.who || [];
+      // Check if every person in props.people is in the meal's who list
+      return props.people.length > 0 && props.people.every(p => whoList.includes(p));
   };
   
-  const openAssignDialog = (date) => {
+  const openAssignDialog = (date, slot) => {
       // Default to everyone in the family list
-      assignForm.value = { date, meal_id: null, who: [...(props.people || [])] }; 
+      assignForm.value = { 
+          date, 
+          slot, 
+          meal_id: null, 
+          who: [...(props.people || [])] 
+      }; 
       assignDialog.value = true;
   };
 
@@ -167,26 +169,30 @@
                   <div class="pa-3 d-flex flex-column align-center justify-center bg-white border-e" style="width: 80px; min-width:80px">
                       <div class="text-subtitle-2 font-weight-bold text-uppercase">{{ day.name }}</div>
                       <div class="text-caption text-grey">{{ day.date.slice(5) }}</div>
-                      <v-icon v-if="isDayComplete(day.date)" color="success" class="mt-2">mdi-check-circle</v-icon>
                   </div>
 
-                  <div class="flex-grow-1 pa-2">
-                      <div v-for="planItem in getMealsForDate(day.date)" :key="planItem.id" class="d-flex align-center justify-space-between mb-2 pa-2 rounded bg-blue-grey-lighten-5">
-                          <div>
-                              <div class="text-subtitle-1 font-weight-bold">{{ planItem.name }}</div>
-                              <div class="d-flex flex-wrap mt-1">
-                                  <v-chip v-for="p in planItem.who" :key="p" size="x-small" color="secondary" class="mr-1" variant="flat">{{ p }}</v-chip>
-                              </div>
+                  <div class="flex-grow-1 pa-1 d-flex flex-column">
+                      <div v-for="slot in slots" :key="slot" class="d-flex align-center border-b py-1" style="min-height: 40px;">
+                          <div style="width: 100px;" class="d-flex align-center pl-2">
+                              <span class="text-caption font-weight-bold text-medium-emphasis mr-1">{{ slot }}</span>
+                              <v-icon v-if="isSlotComplete(day.date, slot)" color="green" size="small">mdi-check-circle</v-icon>
                           </div>
-                          <v-btn icon="mdi-close" size="x-small" variant="text" color="grey" @click="removeAssignment(planItem.id)"></v-btn>
+                          
+                          <div class="flex-grow-1">
+                              <template v-if="getMealForSlot(day.date, slot)">
+                                  <div class="d-flex align-center justify-space-between px-2 rounded bg-blue-grey-lighten-5 ma-1">
+                                      <div>
+                                          <span class="text-body-2 font-weight-bold mr-2">{{ getMealForSlot(day.date, slot).name }}</span>
+                                          <v-chip v-for="p in getMealForSlot(day.date, slot).who" :key="p" size="x-small" density="compact" class="mr-1" style="height: 18px;">{{ p }}</v-chip>
+                                      </div>
+                                      <v-btn icon="mdi-close" size="x-small" variant="text" color="grey" @click="removeAssignment(getMealForSlot(day.date, slot).id)"></v-btn>
+                                  </div>
+                              </template>
+                              <template v-else>
+                                  <v-btn size="x-small" variant="text" color="grey" class="ml-2" @click="openAssignDialog(day.date, slot)">+ Add</v-btn>
+                              </template>
+                          </div>
                       </div>
-
-                      <div v-if="getMealsForDate(day.date).length === 0" class="text-caption text-grey font-italic mb-2 pl-2">
-                          No meals planned
-                      </div>
-                      <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="openAssignDialog(day.date)">
-                          Add Meal
-                      </v-btn>
                   </div>
               </div>
             </v-card>
@@ -215,7 +221,7 @@
 
 <v-dialog v-model="assignDialog" max-width="500px">
   <v-card>
-      <v-card-title>Plan Meal for {{ assignForm.date }}</v-card-title>
+      <v-card-title>Plan {{ assignForm.slot }} for {{ assignForm.date }}</v-card-title>
       <v-card-text>
           <v-select 
               v-model="assignForm.meal_id" 

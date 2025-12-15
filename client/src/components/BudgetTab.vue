@@ -172,14 +172,10 @@
             <v-card class="mb-2 rounded-xl mx-auto text-center position-relative" elevation="2" max-width="600">
                 <div class="position-absolute left-0 top-0 ma-2 d-flex" style="z-index: 20;">
                     <v-tooltip text="Undo" location="top">
-                        <template v-slot:activator="{ props }">
-                            <v-btn v-bind="props" icon="mdi-undo" variant="tonal" color="primary" size="small" class="mr-1" :disabled="!history.length" @click="performUndo"></v-btn>
-                        </template>
+                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-undo" variant="tonal" color="primary" size="small" class="mr-1" :disabled="!history.length" @click="performUndo"></v-btn></template>
                     </v-tooltip>
                     <v-tooltip text="Redo" location="top">
-                        <template v-slot:activator="{ props }">
-                            <v-btn v-bind="props" icon="mdi-redo" variant="tonal" color="primary" size="small" :disabled="!future.length" @click="performRedo"></v-btn>
-                        </template>
+                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-redo" variant="tonal" color="primary" size="small" :disabled="!future.length" @click="performRedo"></v-btn></template>
                     </v-tooltip>
                 </div>
     
@@ -266,7 +262,7 @@
             </div>
         </div>
         
-        <div v-if="expenses.length" class="pt-6">
+        <div v-if="expenses.length" class="mt-4">
             <v-card class="rounded-lg" elevation="3">
                 <v-card-text class="pa-4 bg-surface">
                     <v-row dense align="center">
@@ -340,18 +336,13 @@
 <style scoped>
 .sticky-header {
     position: sticky;
-    top: 64px; 
+    /* User reported 50px works best */
+    top: 48px; 
     z-index: 1000;
     margin-top: -24px;
     padding-top: 24px;
     padding-bottom: 10px;
     transition: all 0.2s ease-in-out;
-    /* Background style is now inline to enforce theme color, but we can fallback here */
-    background-color: white; 
-}
-/* Ensure dark mode background works if theme provider fails */
-.v-theme--dark .sticky-header {
-    background-color: #121212 !important;
 }
 
 .centered-input :deep(input) { text-align: center; }
