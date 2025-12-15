@@ -9,16 +9,38 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import '@mdi/font/css/materialdesignicons.css'
 
-const myCustomTheme = {
-  dark: false,
-  colors: {
-    // Initial Fallback Colors (Material Blue)
-    background: '#fdfbff',
-    surface: '#fdfbff',
-    primary: '#1976d2',
-    secondary: '#555f71',
-    error: '#ba1a1a',
-  }
+// Official Dracula Palette: https://draculatheme.com/contribute#color-palette
+const dracula = {
+    dark: true,
+    colors: {
+        background: '#282a36', // Background
+        surface: '#44475a',    // Current Line / Surface
+        primary: '#bd93f9',    // Purple
+        secondary: '#6272a4',  // Comment
+        error: '#ff5555',      // Red
+        info: '#8be9fd',       // Cyan
+        success: '#50fa7b',    // Green
+        warning: '#ffb86c',    // Orange
+        'on-background': '#f8f8f2', // Foreground
+        'on-surface': '#f8f8f2',
+    }
+}
+
+// Alucard (Light version of Dracula)
+const alucard = {
+    dark: false,
+    colors: {
+        background: '#f8f8f2', // Dracula Foreground becomes Light Background
+        surface: '#ffffff',    // White surface for cards creates depth against off-white BG
+        primary: '#bd93f9',    // Purple (Keep consistent)
+        secondary: '#6272a4',  // Comment
+        error: '#ff5555',      // Red
+        info: '#8be9fd',       // Cyan
+        success: '#50fa7b',    // Green
+        warning: '#ffb86c',    // Orange
+        'on-background': '#282a36', // Dracula Background becomes Text Color
+        'on-surface': '#282a36',
+    }
 }
 
 const vuetify = createVuetify({
@@ -26,17 +48,10 @@ const vuetify = createVuetify({
   components,
   directives,
   theme: {
-    defaultTheme: 'myCustomTheme',
+    defaultTheme: 'alucard',
     themes: {
-      myCustomTheme,
-      dark: {
-          dark: true,
-          colors: {
-              background: '#1a1c1e',
-              surface: '#1a1c1e',
-              primary: '#a0c9ff', // Default Dark Primary
-          }
-      }
+      alucard,
+      dracula,
     }
   }
 })

@@ -46,8 +46,31 @@ const addItem = async () => {
 };
 const saveItem = async () => { await axios.put(`${API_URL}/sandbox/${editForm.value.id}`, editForm.value); editingId.value = null; fetchSandbox(); };
 const deleteItem = async (id) => { await axios.delete(`${API_URL}/sandbox/${id}`); fetchSandbox(); };
-const clear = async () => { if(confirm("Clear?")) { await axios.post(`${API_URL}/sandbox/clear`); fetchSandbox(); }};
-const importMonth = async () => { if(confirm("Overwrite?")) { await axios.post(`${API_URL}/sandbox/clear`); await axios.post(`${API_URL}/sandbox/import`, { month: props.currentMonth }); fetchSandbox(); }};
+
+// --- BULK ACTIONS ---
+const clear = async () => { 
+    if(confirm("Clear the entire Sandbox?")) { 
+        await axios.post(`${API_URL}/sandbox/clear`); 
+        fetchSandbox(); 
+    }
+};
+
+const importMonth = async () => { 
+    if(confirm("Import expenses from the ACTIVE Budget month?\n\nThis will OVERWRITE current Sandbox data.")) { 
+        await axios.post(`${API_URL}/sandbox/clear`); 
+        await axios.post(`${API_URL}/sandbox/import`, { month: props.currentMonth }); 
+        fetchSandbox(); 
+    }
+};
+
+const importTemplates = async () => { 
+    if(confirm("Import items from Master Bill List?\n\nThis will OVERWRITE current Sandbox data.")) { 
+        await axios.post(`${API_URL}/sandbox/clear`); 
+        await axios.post(`${API_URL}/sandbox/import-templates`); 
+        fetchSandbox(); 
+    }
+};
+
 const saveProfile = async () => { if(!newProfile.value) return; await axios.post(`${API_URL}/sandbox/profiles`, { name: newProfile.value, salary: salary.value, expenses: expenses.value }); newProfile.value = ''; fetchSandbox(); emit('notify', 'Saved'); };
 const loadProfile = async (id) => { if(confirm("Load?")) { const res = await axios.post(`${API_URL}/sandbox/profiles/${id}/load`); salary.value = res.data.salary; fetchSandbox(); }};
 const deleteProfile = async (id) => { if(confirm("Delete?")) { await axios.delete(`${API_URL}/sandbox/profiles/${id}`); fetchSandbox(); }};
@@ -73,14 +96,30 @@ onMounted(fetchSandbox);
 
 <template>
     <div>
-        <v-alert icon="mdi-test-tube" title="Sandbox Mode" variant="tonal" color="deep-purple-accent-2" class="mb-6">
+        <v-alert icon="mdi-test-tube" title="Sandbox Mode" variant="tonal" color="deep-purple-accent-2" class="mb-4">
             Isolate scenario testing. Expenses are deducted from Income.
-            <template #append><v-btn @click="importMonth" color="deep-purple-darken-1">Clone Current Month</v-btn></template>
         </v-alert>
-
+        
         <v-card class="pa-4 mb-4" border>
-            <div class="d-flex align-center mb-4"><v-text-field v-model="newProfile" label="Save Scenario As..." density="compact" variant="outlined" hide-details class="mr-2" style="max-width:300px"></v-text-field><v-btn @click="saveProfile" color="deep-purple">Save</v-btn></div>
-            <div class="d-flex flex-wrap gap-2"><v-chip v-for="p in profiles" :key="p.id" closable @click:close="deleteProfile(p.id)" color="deep-purple" variant="outlined">{{p.name}} <v-icon end icon="mdi-upload" @click.stop="loadProfile(p.id)"></v-icon></v-chip></div>
+            <div class="d-flex flex-wrap gap-2 align-center justify-space-between mb-4">
+                 <div class="d-flex align-center">
+                    <v-btn color="deep-purple-darken-1" size="small" prepend-icon="mdi-playlist-star" class="mr-2" @click="importTemplates">Import Templates</v-btn>
+                    <v-btn color="deep-purple-darken-1" size="small" prepend-icon="mdi-calendar-month" class="mr-2" @click="importMonth">Import Month</v-btn>
+                    <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete-sweep" @click="clear">Clear</v-btn>
+                </div>
+
+                <div class="d-flex align-center">
+                    <v-text-field v-model="newProfile" placeholder="Save as..." density="compact" variant="outlined" hide-details class="mr-2" style="width:180px"></v-text-field>
+                    <v-btn @click="saveProfile" color="deep-purple" size="small" icon="mdi-content-save"></v-btn>
+                </div>
+            </div>
+            
+            <v-divider v-if="profiles.length" class="mb-3"></v-divider>
+            <div v-if="profiles.length" class="d-flex flex-wrap gap-2">
+                <v-chip v-for="p in profiles" :key="p.id" closable @click:close="deleteProfile(p.id)" color="deep-purple" variant="outlined" size="small">
+                    {{p.name}} <v-icon end icon="mdi-upload" @click.stop="loadProfile(p.id)"></v-icon>
+                </v-chip>
+            </div>
         </v-card>
 
         <v-row class="mb-4">
@@ -133,7 +172,6 @@ onMounted(fetchSandbox);
                     <tr class="font-weight-bold" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'"><td :colspan="columns.length - 2">TOTAL EXPENSES</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
                 </tbody>
             </v-table>
-            <v-card-actions class="justify-end"><v-btn color="error" @click="clear">Clear All</v-btn></v-card-actions>
         </v-card>
     </div>
 </template>

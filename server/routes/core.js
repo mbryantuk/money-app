@@ -79,10 +79,12 @@ router.post('/month/init', (req, res) => {
     const { month, source, previousMonth } = req.body;
     db.get("SELECT value FROM settings WHERE key = 'default_salary'", (err, setting) => {
         const val = setting ? parseFloat(setting.value) : 0;
-        db.run("INSERT OR IGNORE INTO monthly_balances (month, amount, salary) VALUES (?, ?, ?)", [month, 0, val]);
+        
+        // FIX: Set initial 'amount' (Balance) to equal 'val' (Salary)
+        // Previously: VALUES (?, 0, val)
+        db.run("INSERT INTO monthly_balances (month, amount, salary) VALUES (?, ?, ?) ON CONFLICT(month) DO UPDATE SET amount=excluded.amount, salary=excluded.salary", [month, val, val]);
     });
     
-    // Force absolute value during copy
     let query = source === 'template' 
         ? "SELECT name, ABS(amount) as amount, category, who, vendor, expected_date FROM expense_templates" 
         : `SELECT name, ABS(amount) as amount, category, who, vendor, expected_date FROM expenses WHERE month = '${previousMonth}'`;
@@ -142,7 +144,6 @@ router.delete('/templates/all', (req, res) => {
 
 router.post('/templates/import', (req, res) => {
     const { month } = req.body;
-    // Force absolute value on import
     const sql = `INSERT INTO expense_templates (name, amount, category, who, vendor, expected_date) SELECT name, ABS(amount), category, who, vendor, expected_date FROM expenses WHERE month = ?`;
     db.run(sql, [month], function(err) {
         if(err) return res.status(500).json({error: err.message});

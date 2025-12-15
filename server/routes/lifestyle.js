@@ -13,17 +13,21 @@ router.get('/meals', (req, res) => db.all("SELECT * FROM meals ORDER BY name ASC
     const meals = rows ? rows.map(m => ({ ...m, tags: JSON.parse(m.tags || '[]') })) : []; 
     res.json(meals); 
 }));
+
 router.post('/meals', (req, res) => { 
     const { name, description, tags, type } = req.body; 
     db.run("INSERT INTO meals (name, description, tags, type) VALUES (?, ?, ?, ?)", [name, description, JSON.stringify(tags || []), type], function(err) { if (err) return res.status(500).json({ error: err.message }); res.json({ id: this.lastID, success: true }); });
 });
+
 router.put('/meals/:id', (req, res) => { 
     const { name, description, tags, type } = req.body; 
     db.run("UPDATE meals SET name = ?, description = ?, tags = ?, type = ? WHERE id = ?", [name, description, JSON.stringify(tags || []), type, req.params.id], (err) => { if (err) return res.status(500).json({ error: err.message }); res.json({ success: true }); });
 });
+
 router.delete('/meals/:id', (req, res) => { 
     db.serialize(() => { db.run("DELETE FROM meal_plan WHERE meal_id = ?", [req.params.id]); db.run("DELETE FROM meals WHERE id = ?", [req.params.id]); }); res.json({ success: true });
 });
+
 router.get('/meal-plan', (req, res) => { 
     const { start, end } = req.query; 
     const sql = `SELECT p.id, p.date, p.slot, p.meal_id, p.who, m.name, m.description, m.tags, m.type FROM meal_plan p LEFT JOIN meals m ON p.meal_id = m.id WHERE p.date BETWEEN ? AND ?`; 
@@ -33,12 +37,14 @@ router.get('/meal-plan', (req, res) => {
         res.json(plan); 
     });
 });
+
 router.post('/meal-plan', (req, res) => { 
     const { date, slot, meal_id, who } = req.body; 
     db.run("INSERT INTO meal_plan (date, slot, meal_id, who) VALUES (?, ?, ?, ?)", [date, slot, meal_id, JSON.stringify(who || [])], function(err) {
         if (err) { if (err.message.includes('no column') || err.message.includes('constraint')) { db.serialize(() => { db.run("DROP TABLE IF EXISTS meal_plan"); db.run(`CREATE TABLE meal_plan (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, slot TEXT, meal_id INTEGER, who TEXT)`); db.run("INSERT INTO meal_plan (date, slot, meal_id, who) VALUES (?, ?, ?, ?)", [date, slot, meal_id, JSON.stringify(who || [])], function() { res.json({ success: true, id: this.lastID, note: "Schema upgraded" }); }); }); } else { res.status(500).json({ error: err.message }); } } else { res.json({ success: true, id: this.lastID }); }
     });
 });
+
 router.delete('/meal-plan/:id', (req, res) => { db.run("DELETE FROM meal_plan WHERE id = ?", [req.params.id], () => res.json({ success: true })); });
 
 // --- CHRISTMAS ---
@@ -62,6 +68,7 @@ router.put('/sandbox/:id', (req, res) => {
 });
 router.delete('/sandbox/:id', (req, res) => db.run("DELETE FROM sandbox_expenses WHERE id=?", [req.params.id], () => res.json({ success: true })));
 router.post('/sandbox/clear', (req, res) => db.run("DELETE FROM sandbox_expenses", () => res.json({ success: true })));
+
 router.post('/sandbox/import', (req, res) => { 
     db.all("SELECT name, amount, category, who, vendor, expected_date FROM expenses WHERE month = ?", [req.body.month], (err, rows) => { 
         if(!rows) return res.json({ success: true }); 
@@ -70,6 +77,17 @@ router.post('/sandbox/import', (req, res) => {
         stmt.finalize(() => res.json({ success: true })); 
     });
 });
+
+// NEW: Import from Master Bill List
+router.post('/sandbox/import-templates', (req, res) => {
+    db.all("SELECT name, amount, category, who, vendor, expected_date FROM expense_templates", [], (err, rows) => {
+        if(!rows) return res.json({ success: true });
+        const stmt = db.prepare("INSERT INTO sandbox_expenses (name, amount, category, who, vendor, expected_date, paid) VALUES (?, ?, ?, ?, ?, ?, 0)");
+        rows.forEach(r => stmt.run(r.name, Math.abs(r.amount), r.category, r.who, r.vendor, r.expected_date));
+        stmt.finalize(() => res.json({ success: true }));
+    });
+});
+
 router.get('/sandbox/profiles', (req, res) => db.all("SELECT id, name, salary FROM sandbox_profiles", (err, rows) => res.json(rows || [])));
 router.post('/sandbox/profiles', (req, res) => { const { name, salary, expenses } = req.body; db.run("INSERT INTO sandbox_profiles (name, salary, items) VALUES (?, ?, ?)", [name, salary, JSON.stringify(expenses)], function() { res.json({ id: this.lastID }); });});
 router.delete('/sandbox/profiles/:id', (req, res) => db.run("DELETE FROM sandbox_profiles WHERE id = ?", [req.params.id], () => res.json({ success: true })));

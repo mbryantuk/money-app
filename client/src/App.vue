@@ -30,8 +30,8 @@
   const openList = ref([]); 
   const tab = ref('dashboard');
   
-  // Theme State
-  const primaryColor = ref('#1976D2'); 
+  // Theme State - Default to Dracula Purple if not set
+  const primaryColor = ref('#bd93f9'); 
 
   // Calculator State
   const showCalculator = ref(false);
@@ -92,14 +92,16 @@
     snackbar.value = true;
   };
   
+  // Updated Toggle Theme: Swaps between Alucard (Light) and Dracula (Dark)
   const toggleTheme = () => {
-    theme.global.name.value = isDark.value ? 'myCustomTheme' : 'dark';
+    theme.global.name.value = isDark.value ? 'alucard' : 'dracula';
   };
 
+  // Updated Theme Color: Updates both themes so custom picker works
   const updateThemeColor = (color) => {
       primaryColor.value = color;
-      theme.themes.value.myCustomTheme.colors.primary = color;
-      theme.themes.value.dark.colors.primary = color;
+      if(theme.themes.value.alucard) theme.themes.value.alucard.colors.primary = color;
+      if(theme.themes.value.dracula) theme.themes.value.dracula.colors.primary = color;
   };
   
   // --- SAVINGS LOGIC ---
@@ -243,6 +245,7 @@
       defaultSalary.value = parseFloat(settings.default_salary) || 0;
       payDay.value = parseInt(settings.pay_day) || 1;
       
+      // Load AI Settings
       ollamaUrl.value = settings.ollama_url || '';
       ollamaModel.value = settings.ollama_model || '';
       

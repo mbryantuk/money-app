@@ -26,6 +26,11 @@
     const search = ref(''); 
     const isCompact = ref(false); 
 
+    // SOUND EFFECT
+    // A simple, free-to-use cash register sound URL
+    const kachingSound = new Audio('https://www.myinstants.com/media/sounds/ka-ching.mp3');
+    kachingSound.volume = 0.5; // Set volume to 50% so it's not startling
+
     // UNDO / REDO STATE
     const history = ref([]);
     const future = ref([]);
@@ -45,7 +50,7 @@
     const sortOrder = ref(1);
     const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing', vendor: '', expected_date: '' });
     
-    // ... [Date helpers & formatters kept same] ...
+    // --- DATES & COMPUTED ---
     const getPayDate = (year, month) => {
         let d = new Date(year, month, props.payDay); 
         const day = d.getDay(); 
@@ -83,7 +88,7 @@
         }).map(p => { const d = new Date(p.date); return { ...p, displayDate: `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })}` } });
     });
     
-    // COMPUTED
+    // COMPUTED TOTALS
     const totalExpenses = computed(() => expenses.value.reduce((acc, item) => acc + Number(item.amount), 0));
     const paidExpenses = computed(() => expenses.value.filter(item => item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
     const leftToPay = computed(() => expenses.value.filter(item => !item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
@@ -147,7 +152,20 @@
         fetchData(); 
     };
     
-    const togglePaid = async (item) => { saveToHistory(); item.paid = !item.paid; item.paid_at = item.paid ? new Date().toISOString() : null; await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid }); };
+    const togglePaid = async (item) => { 
+        saveToHistory(); 
+        item.paid = !item.paid; 
+        item.paid_at = item.paid ? new Date().toISOString() : null; 
+        
+        // Play Ka-Ching sound if marking AS paid (not unmarking)
+        if (item.paid) {
+            kachingSound.currentTime = 0; // Reset sound to start if clicked rapidly
+            kachingSound.play().catch(e => console.log("Audio play blocked", e));
+        }
+
+        await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid }); 
+    };
+
     const updateCell = async (item, key, value) => { if (item[key] === value) return; saveToHistory(); item[key] = value; try { await axios.put(`${API_URL}/expenses/${item.id}`, item); } catch (e) { emit('notify', 'Error saving item', 'error'); } };
     const deleteSelected = async () => { if(!selectedExpenses.value.length) return; if(!confirm(`Delete ${selectedExpenses.value.length} items?`)) return; saveToHistory(); try { await Promise.all(selectedExpenses.value.map(id => axios.delete(`${API_URL}/expenses/${id}`))); selectedExpenses.value = []; fetchData(); emit('notify', 'Items deleted'); } catch (e) { console.error(e); } };
     const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
@@ -179,7 +197,7 @@
                     </div>
                     <div style="width: 40px"><v-btn v-if="expenses.length" icon="mdi-delete-sweep-outline" color="red-lighten-1" variant="text" @click="resetMonth"></v-btn></div>
                 </div>
-                </v-card>
+            </v-card>
             <v-textarea v-if="!isCompact" v-model="notes" rows="1" auto-grow density="compact" variant="solo-filled" label="Month Notes" hide-details class="mb-4 mx-auto" style="max-width: 600px" @blur="saveNotes"></v-textarea>
             
             <div v-if="expenses.length">
