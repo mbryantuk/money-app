@@ -24,7 +24,7 @@
     const expenses = ref([]);
     const selectedExpenses = ref([]);
     const search = ref(''); 
-    const isCompact = ref(false); // Controls the shrink header
+    const isCompact = ref(false); 
 
     // UNDO / REDO STATE
     const history = ref([]);
@@ -168,14 +168,18 @@
     
 <template>
     <div class="position-relative">
-        <div class="sticky-header pt-2" :class="isDark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4'">
+        <div class="sticky-header pt-2" style="background: rgb(var(--v-theme-surface));">
             <v-card class="mb-2 rounded-xl mx-auto text-center position-relative" elevation="2" max-width="600">
-                <div class="position-absolute left-0 top-0 ma-2 d-flex">
+                <div class="position-absolute left-0 top-0 ma-2 d-flex" style="z-index: 20;">
                     <v-tooltip text="Undo" location="top">
-                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-undo" variant="text" size="small" :disabled="!history.length" @click="performUndo"></v-btn></template>
+                        <template v-slot:activator="{ props }">
+                            <v-btn v-bind="props" icon="mdi-undo" variant="tonal" color="primary" size="small" class="mr-1" :disabled="!history.length" @click="performUndo"></v-btn>
+                        </template>
                     </v-tooltip>
                     <v-tooltip text="Redo" location="top">
-                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-redo" variant="text" size="small" :disabled="!future.length" @click="performRedo"></v-btn></template>
+                        <template v-slot:activator="{ props }">
+                            <v-btn v-bind="props" icon="mdi-redo" variant="tonal" color="primary" size="small" :disabled="!future.length" @click="performRedo"></v-btn>
+                        </template>
                     </v-tooltip>
                 </div>
     
@@ -211,19 +215,19 @@
                 <v-card v-if="isCompact" class="mb-4 rounded-lg d-flex align-center justify-space-around pa-2 bg-primary text-white" elevation="4">
                     <div class="d-flex flex-column align-center">
                         <span class="text-caption font-weight-bold opacity-80">Income</span>
-                        <span class="font-weight-black">£{{salary.toFixed(0)}}</span>
+                        <span class="font-weight-black">£{{salary.toFixed(2)}}</span>
                     </div>
                     <div class="d-flex flex-column align-center">
                         <span class="text-caption font-weight-bold opacity-80">Balance</span>
-                        <span class="font-weight-black" :class="balance < 0 ? 'text-red-lighten-3' : ''">£{{balance.toFixed(0)}}</span>
+                        <span class="font-weight-black" :class="balance < 0 ? 'text-red-lighten-3' : ''">£{{balance.toFixed(2)}}</span>
                     </div>
                     <div class="d-flex flex-column align-center">
                         <span class="text-caption font-weight-bold opacity-80">Left</span>
-                        <span class="font-weight-black" :class="projectedBalance < 0 ? 'text-red-lighten-3' : ''">£{{projectedBalance.toFixed(0)}}</span>
+                        <span class="font-weight-black" :class="projectedBalance < 0 ? 'text-red-lighten-3' : ''">£{{projectedBalance.toFixed(2)}}</span>
                     </div>
                     <div class="d-flex flex-column align-center">
                         <span class="text-caption font-weight-bold opacity-80">Unpaid</span>
-                        <span class="font-weight-black">£{{leftToPay.toFixed(0)}}</span>
+                        <span class="font-weight-black">£{{leftToPay.toFixed(2)}}</span>
                     </div>
                 </v-card>
 
@@ -261,7 +265,8 @@
                 </v-row>
             </div>
         </div>
-        <div v-if="expenses.length">
+        
+        <div v-if="expenses.length" class="pt-6">
             <v-card class="rounded-lg" elevation="3">
                 <v-card-text class="pa-4 bg-surface">
                     <v-row dense align="center">
@@ -322,11 +327,11 @@
                 </v-table>
             </v-card>
 
-            <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-inverse-surface d-flex align-center justify-center" style="z-index: 100; max-width: 400px; margin: 0 auto 20px auto !important;">
+            <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-grey-darken-3 d-flex align-center justify-center text-white" style="z-index: 100; max-width: 400px; margin: 0 auto 20px auto !important;">
                 <span class="font-weight-bold mr-4">{{selectedExpenses.length}} Selected</span>
                 <span class="text-h6 font-weight-black mr-4">£{{selectedTotal.toFixed(2)}}</span>
-                <v-btn icon="mdi-delete" color="error" variant="text" class="mr-2" @click="deleteSelected"></v-btn>
-                <v-btn icon="mdi-close" size="small" variant="text" @click="selectedExpenses = []"></v-btn>
+                <v-btn icon="mdi-delete" color="white" variant="text" class="mr-2" @click="deleteSelected"></v-btn>
+                <v-btn icon="mdi-close" color="white" size="small" variant="text" @click="selectedExpenses = []"></v-btn>
             </v-card>
         </div>
     </div>
@@ -336,12 +341,19 @@
 .sticky-header {
     position: sticky;
     top: 64px; 
-    z-index: 10;
+    z-index: 1000;
     margin-top: -24px;
     padding-top: 24px;
     padding-bottom: 10px;
     transition: all 0.2s ease-in-out;
+    /* Background style is now inline to enforce theme color, but we can fallback here */
+    background-color: white; 
 }
+/* Ensure dark mode background works if theme provider fails */
+.v-theme--dark .sticky-header {
+    background-color: #121212 !important;
+}
+
 .centered-input :deep(input) { text-align: center; }
 .font-monospace { font-family: 'Roboto Mono', monospace; }
 .cursor-move { cursor: move; }
