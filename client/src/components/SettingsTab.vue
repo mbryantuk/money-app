@@ -10,6 +10,7 @@
         payDay: Number,
         ollamaUrl: String,
         ollamaModel: String,
+        primaryColor: String, // <--- 1. NEW PROP
         prompts: { type: Object, default: () => ({}) }
     });
     
@@ -17,23 +18,20 @@
         'notify', 'refresh', 
         'update:people', 'update:family', 'update:categories', 
         'update:default-salary', 'update:pay-day',
-        'update:ollama-url', 'update:ollama-model'
+        'update:ollama-url', 'update:ollama-model',
+        'update:primary-color' // <--- 2. NEW EMIT
     ]);
     
     const API_URL = '/api';
     
-    // --- Local State ---
+    // ... [Existing state: renameForm, availableModels, etc] ...
+    // Note: Keep existing code for computed proxies and API Actions
     const renameForm = ref({ type: 'people', oldName: null, newName: '' });
     const availableModels = ref([]);
     const loadingModels = ref(false);
-    
-    // Tabs for AI Prompts
     const promptTab = ref('budget');
-
-    // Local copies of prompts for editing
     const localPrompts = ref({ ...props.prompts });
 
-    // --- Computed Proxies for Lists ---
     const peopleList = computed({
         get: () => props.people || [],
         set: (val) => { emit('update:people', val); saveSetting('people', val); }
@@ -48,23 +46,20 @@
         get: () => props.categories || [],
         set: (val) => { emit('update:categories', val); saveSetting('categories', val); }
     });
-    
-    // --- API Actions ---
+
     const saveSetting = async (key, val) => { 
         await axios.post(`${API_URL}/settings`, { key, value: typeof val === 'object' ? JSON.stringify(val) : val }); 
         emit('notify', 'Saved'); 
     };
     
+    // ... [Existing save functions] ...
     const saveSalary = async () => { saveSetting('default_salary', props.defaultSalary); };
     const savePayDay = async () => { saveSetting('pay_day', props.payDay); };
     const saveOllamaUrl = async (val) => { saveSetting('ollama_url', val); };
     const saveOllamaModel = async (val) => { saveSetting('ollama_model', val); };
+    const savePrompt = (key) => { saveSetting(`prompt_${key}`, localPrompts.value[key]); };
 
-    // New: Save Prompt
-    const savePrompt = (key) => {
-        saveSetting(`prompt_${key}`, localPrompts.value[key]);
-    };
-
+    // ... [Existing fetchModels and performRename logic] ...
     const fetchModels = async () => {
         if (!props.ollamaUrl) return emit('notify', 'Please set Ollama URL first', 'error');
         loadingModels.value = true;
@@ -105,6 +100,37 @@
     
 <template>
     <v-row>
+        <v-col cols="12">
+            <v-card class="pa-4 border-s-lg border-info" elevation="3">
+                <h3 class="text-h6 mb-2">Appearance</h3>
+                <div class="d-flex align-center">
+                    <v-text-field
+                        :model-value="props.primaryColor"
+                        @update:model-value="(val) => emit('update:primary-color', val)"
+                        @change="(e) => saveSetting('theme_color', e.target.value)"
+                        label="Primary Theme Color"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        class="mr-4"
+                        style="max-width: 300px"
+                    >
+                        <template v-slot:prepend>
+                            <div :style="{ backgroundColor: props.primaryColor, width: '24px', height: '24px', borderRadius: '4px', border: '1px solid #ddd' }"></div>
+                        </template>
+                    </v-text-field>
+                    <input 
+                        type="color" 
+                        :value="props.primaryColor" 
+                        @input="(e) => emit('update:primary-color', e.target.value)"
+                        @change="(e) => saveSetting('theme_color', e.target.value)"
+                        style="height: 40px; cursor: pointer; width: 60px;"
+                        title="Pick Color"
+                    >
+                </div>
+            </v-card>
+        </v-col>
+
         <v-col cols="12" md="6">
             <v-card class="mb-4 pa-4 border-s-lg border-primary" elevation="3">
                 <h3 class="text-h6 mb-2">Global Rename</h3>
