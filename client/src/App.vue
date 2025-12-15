@@ -16,6 +16,7 @@
   import ReportsTab from './components/ReportsTab.vue';
   import CreditCardsTab from './components/CreditCardsTab.vue';
   import MealsTab from './components/MealsTab.vue';
+  import BirthdaysTab from './components/BirthdaysTab.vue'; // [!code ++]
   
   // --- STATE MANAGEMENT ---
   const theme = useTheme();
@@ -37,6 +38,7 @@
   const defaultSalary = ref(0);
   const payDay = ref(1);
   const templates = ref([]);
+  const birthdays = ref([]); // [!code ++]
   
   // Notification Snackbar
   const snackbar = ref(false);
@@ -93,9 +95,10 @@
   // --- API & LIFECYCLE ---
   const fetchSettings = async () => {
     try {
-      const [settingsRes, templatesRes] = await Promise.all([
+      const [settingsRes, templatesRes, birthdaysRes] = await Promise.all([
         axios.get('/api/settings'),
-        axios.get('/api/templates')
+        axios.get('/api/templates'),
+        axios.get('/api/birthdays') // [!code ++]
       ]);
       const settings = settingsRes.data || {};
       if (settings.people) availablePeople.value = JSON.parse(settings.people);
@@ -103,16 +106,13 @@
       defaultSalary.value = parseFloat(settings.default_salary) || 0;
       payDay.value = parseInt(settings.pay_day) || 1;
       templates.value = templatesRes.data || [];
+      birthdays.value = birthdaysRes.data || []; // [!code ++]
   
-      // [!code ++] Auto-set Month based on Pay Cycle
+      // Auto-set Month based on Pay Cycle
       const now = new Date();
-      
-      // If today is BEFORE payday, we are in the cycle that started LAST month
       if (now.getDate() < payDay.value) {
         now.setMonth(now.getMonth() - 1);
       }
-      // If today is ON or AFTER payday, we are in the cycle that started THIS month (no change)
-  
       const y = now.getFullYear();
       const m = String(now.getMonth() + 1).padStart(2, '0');
       currentMonth.value = `${y}-${m}`;
@@ -150,6 +150,7 @@
           <v-list-item prepend-icon="mdi-credit-card-outline" title="Credit Cards" value="credit_cards" @click="selectTab('credit_cards')" :active="tab === 'credit_cards'" color="primary" rounded="xl"></v-list-item>
           <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="selectTab('mortgage')" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
           <v-list-item prepend-icon="mdi-food-fork-drink" title="Meals" value="meals" @click="selectTab('meals')" :active="tab === 'meals'" color="primary" rounded="xl"></v-list-item>
+          <v-list-item prepend-icon="mdi-cake-variant-outline" title="Birthdays" value="birthdays" @click="selectTab('birthdays')" :active="tab === 'birthdays'" color="primary" rounded="xl"></v-list-item>
           <v-list-item prepend-icon="mdi-gift-outline" title="Christmas" value="christmas" @click="selectTab('christmas')" :active="tab === 'christmas'" color="primary" rounded="xl"></v-list-item>
           <v-list-item prepend-icon="mdi-test-tube" title="Sandbox" value="sandbox" @click="selectTab('sandbox')" :active="tab === 'sandbox'" color="primary" rounded="xl"></v-list-item>
           
@@ -210,12 +211,12 @@
       <v-main :class="isDark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4'">
         <v-container class="py-6" fluid style="max-width: 1400px;">
           <DashboardTab v-if="tab === 'dashboard'" />
-          <BudgetTab v-if="tab === 'budget' && currentMonth" v-model:month="currentMonth" :people="availablePeople" :categories="availableCategories" :default-salary="defaultSalary" :pay-day="pay-day" @notify="showMsg" />
+          <BudgetTab v-if="tab === 'budget' && currentMonth" v-model:month="currentMonth" :people="availablePeople" :categories="availableCategories" :default-salary="defaultSalary" :pay-day="payDay" :birthdays="birthdays" @notify="showMsg" />
           <SavingsTab v-if="tab === 'savings'" @notify="showMsg" />
           <CreditCardsTab v-if="tab === 'credit_cards'" @notify="showMsg" />
           <MortgageTab v-if="tab === 'mortgage'" @notify="showMsg" />
-          <ChristmasTab v-if="tab === 'christmas'" @notify="showMsg" />
           <MealsTab v-if="tab === 'meals'" />
+          <BirthdaysTab v-if="tab === 'birthdays'" @notify="showMsg" /> <ChristmasTab v-if="tab === 'christmas'" @notify="showMsg" />
           <ReportsTab v-if="tab === 'reports'" /> 
           <SandboxTab v-if="tab === 'sandbox'" :people="availablePeople" :categories="availableCategories" :current-month="currentMonth" @notify="showMsg" />
           

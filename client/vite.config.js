@@ -9,12 +9,14 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Ensure the new PNGs are included in the offline cache
+      includeAssets: ['logo.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       workbox: {
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,json,vue,txt,woff2}'],
-        // --- NEW: Cache API responses for offline usage ---
+        // Cache API responses for offline usage
         runtimeCaching: [{
           urlPattern: ({ url }) => url.pathname.startsWith('/api'),
           handler: 'NetworkFirst',
@@ -40,42 +42,41 @@ export default defineConfig({
         theme_color: '#1976D2',
         background_color: '#F2F5F8',
         display: 'standalone',
-        // --- NEW: Allow rotation ---
         orientation: 'any',
+        // Updated Icons to use PNGs for better compatibility (Windows/iOS)
         icons: [
           {
-            src: 'logo.svg',
-            sizes: '64x64 32x32 24x24 16x16',
-            type: 'image/svg+xml'
-          },
-          {
-            src: 'logo.svg',
+            src: 'pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/svg+xml',
-            purpose: 'any maskable'
+            type: 'image/png'
           },
           {
-            src: 'logo.svg',
+            src: 'pwa-512x512.png',
             sizes: '512x512',
-            type: 'image/svg+xml',
+            type: 'image/png'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
             purpose: 'any maskable'
           }
         ],
-        // --- NEW: App Shortcuts (Long press icon) ---
+        // App Shortcuts (Long press icon)
         shortcuts: [
           {
             name: "Open Budget",
             short_name: "Budget",
             description: "Go directly to budget",
             url: "/?tab=budget",
-            icons: [{ src: "logo.svg", sizes: "192x192" }]
+            icons: [{ src: "pwa-192x192.png", sizes: "192x192", type: "image/png" }]
           },
           {
             name: "Quick Add",
             short_name: "Add",
             description: "Add new expense",
             url: "/?tab=budget&action=add",
-            icons: [{ src: "logo.svg", sizes: "192x192" }]
+            icons: [{ src: "pwa-192x192.png", sizes: "192x192", type: "image/png" }]
           }
         ]
       }

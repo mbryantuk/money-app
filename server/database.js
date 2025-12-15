@@ -30,6 +30,9 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS expense_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, amount REAL, category TEXT, who TEXT)`);
 
+    // --- BIRTHDAYS ---
+    db.run(`CREATE TABLE IF NOT EXISTS birthdays (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, date TEXT, type TEXT)`);
+
     // Seed Settings
     const seedSettings = [
         { key: 'default_salary', value: '2500' },

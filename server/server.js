@@ -21,6 +21,7 @@ db.serialize(() => {
     // --- MEAL PLANNER ---
     db.run(`CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, tags TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS meal_plan (date TEXT PRIMARY KEY, meal_id INTEGER)`);
+    // Note: birthdays created in database.js
 });
 
 // --- DATA ENDPOINTS ---
@@ -50,6 +51,22 @@ app.post('/api/balance', (req, res) => {
 app.post('/api/salary', (req, res) => {
     const { month, amount } = req.body;
     db.run(`INSERT INTO monthly_balances (month, salary) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET salary=excluded.salary`, [month, amount], () => res.json({ success: true }));
+});
+
+// --- BIRTHDAYS ---
+app.get('/api/birthdays', (req, res) => {
+    db.all("SELECT * FROM birthdays ORDER BY date ASC", (err, rows) => res.json(rows || []));
+});
+app.post('/api/birthdays', (req, res) => {
+    const { name, date, type } = req.body;
+    db.run("INSERT INTO birthdays (name, date, type) VALUES (?, ?, ?)", [name, date, type], function() { res.json({ id: this.lastID }); });
+});
+app.put('/api/birthdays/:id', (req, res) => {
+    const { name, date, type } = req.body;
+    db.run("UPDATE birthdays SET name=?, date=?, type=? WHERE id=?", [name, date, type, req.params.id], () => res.json({ success: true }));
+});
+app.delete('/api/birthdays/:id', (req, res) => {
+    db.run("DELETE FROM birthdays WHERE id=?", [req.params.id], () => res.json({ success: true }));
 });
 
 // --- MEAL PLANNER ENDPOINTS ---
@@ -193,7 +210,7 @@ app.get('/api/admin/data', (req, res) => {
     });
 });
 
-const ALLOWED_TABLES = ['expenses', 'monthly_balances', 'settings', 'expense_templates', 'savings_accounts', 'savings_pots', 'sandbox_expenses', 'sandbox_profiles', 'christmas_list', 'credit_cards', 'cc_transactions', 'meals', 'meal_plan'];
+const ALLOWED_TABLES = ['expenses', 'monthly_balances', 'settings', 'expense_templates', 'savings_accounts', 'savings_pots', 'sandbox_expenses', 'sandbox_profiles', 'christmas_list', 'credit_cards', 'cc_transactions', 'meals', 'meal_plan', 'birthdays'];
 
 app.get('/api/admin/table/:name', (req, res) => {
     if (!ALLOWED_TABLES.includes(req.params.name)) return res.status(403).json({ error: "Invalid table" });
