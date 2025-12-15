@@ -14,7 +14,7 @@ const expenses = ref([]);
 const salary = ref(0);
 const profiles = ref([]);
 const newProfile = ref('');
-const newItem = ref({ who: 'Joint', name: '', amount: '', category: 'Spending' });
+const newItem = ref({ who: 'Joint', name: '', amount: '', category: 'Spending', vendor: '', expected_date: '' });
 const editingId = ref(null);
 const editForm = ref({});
 const search = ref('');
@@ -22,7 +22,9 @@ const search = ref('');
 // Dynamic Columns
 const columns = ref([
     { key: 'who', label: 'Who', align: 'left', width: '100px', sortable: true },
+    { key: 'vendor', label: 'Vendor', align: 'left', width: '140px', sortable: true },
     { key: 'name', label: 'Item', align: 'left', width: '', sortable: true },
+    { key: 'expected_date', label: 'Day', align: 'center', width: '60px', sortable: true },
     { key: 'amount', label: 'Amount', align: 'right', width: '120px', sortable: true },
     { key: 'category', label: 'Category', align: 'left', width: '140px', sortable: true },
     { key: 'actions', label: '', align: 'end', width: '80px', sortable: false }
@@ -39,7 +41,8 @@ const fetchSandbox = async () => {
 const addItem = async () => {
     if(!newItem.value.name) return;
     await axios.post(`${API_URL}/sandbox`, { ...newItem.value, amount: parseFloat(newItem.value.amount) });
-    newItem.value.name = ''; newItem.value.amount = ''; fetchSandbox();
+    newItem.value.name = ''; newItem.value.amount = ''; newItem.value.vendor = ''; newItem.value.expected_date = '';
+    fetchSandbox();
 };
 const saveItem = async () => { await axios.put(`${API_URL}/sandbox/${editForm.value.id}`, editForm.value); editingId.value = null; fetchSandbox(); };
 const deleteItem = async (id) => { await axios.delete(`${API_URL}/sandbox/${id}`); fetchSandbox(); };
@@ -90,19 +93,21 @@ onMounted(fetchSandbox);
         <v-card>
             <v-card-text class="bg-background pa-4">
                 <v-row dense>
-                    <v-col cols="3"><v-select v-model="newItem.who" :items="people" density="compact" variant="solo" hide-details></v-select></v-col>
+                    <v-col cols="2"><v-select v-model="newItem.who" :items="people" density="compact" variant="solo" hide-details label="Who"></v-select></v-col>
+                    <v-col cols="2"><v-text-field v-model="newItem.vendor" label="Vendor" density="compact" variant="solo" hide-details></v-text-field></v-col>
                     <v-col cols="3"><v-text-field v-model="newItem.name" label="Item" density="compact" variant="solo" hide-details></v-text-field></v-col>
-                    <v-col cols="2"><v-text-field v-model="newItem.amount" type="number" prefix="£" density="compact" variant="solo" hide-details></v-text-field></v-col>
-                    <v-col cols="2"><v-select v-model="newItem.category" :items="categories" density="compact" variant="solo" hide-details></v-select></v-col>
-                    <v-col cols="2"><v-btn block color="deep-purple" @click="addItem">Add</v-btn></v-col>
+                    <v-col cols="1"><v-text-field v-model="newItem.expected_date" label="Day" type="number" density="compact" variant="solo" hide-details></v-text-field></v-col>
+                    <v-col cols="2"><v-text-field v-model="newItem.amount" type="number" prefix="£" density="compact" variant="solo" hide-details label="Amount"></v-text-field></v-col>
+                    <v-col cols="2"><v-select v-model="newItem.category" :items="categories" density="compact" variant="solo" hide-details label="Category"></v-select></v-col>
+                    <v-col cols="12"><v-btn block color="deep-purple" @click="addItem">Add</v-btn></v-col>
                 </v-row>
             </v-card-text>
             <div class="d-flex justify-end px-4 py-2"><v-text-field v-model="search" label="Search" density="compact" variant="plain" hide-details prepend-inner-icon="mdi-magnify" style="max-width: 200px"></v-text-field></div>
-            <v-table>
+            <v-table hover density="comfortable">
                 <thead>
                     <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
                         <template #item="{ element: col }">
-                            <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header">
+                            <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header text-caption text-uppercase">
                                 <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}"><v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon><span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">{{ col.label }}<v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon></span></div>
                             </th>
                         </template>
@@ -111,17 +116,19 @@ onMounted(fetchSandbox);
                 <tbody>
                     <tr v-for="ex in filteredExpenses" :key="ex.id">
                         <td v-for="col in columns" :key="col.key" :class="'text-'+col.align">
-                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined"></v-select><span v-else>{{ex.who}}</span></div>
-                            <div v-else-if="col.key === 'name'"><v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined"></v-text-field><span v-else>{{ex.name}}</span></div>
-                            <div v-else-if="col.key === 'amount'"><v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined"></v-text-field><span v-else>£{{ex.amount.toFixed(2)}}</span></div>
-                            <div v-else-if="col.key === 'category'"><v-select v-if="editingId===ex.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined"></v-select><span v-else>{{ex.category}}</span></div>
+                            <div v-if="col.key === 'who'"><v-select v-if="editingId===ex.id" v-model="editForm.who" :items="people" density="compact" variant="outlined" hide-details></v-select><span v-else>{{ex.who}}</span></div>
+                            <div v-else-if="col.key === 'vendor'"><v-text-field v-if="editingId===ex.id" v-model="editForm.vendor" density="compact" variant="outlined" hide-details></v-text-field><span v-else>{{ex.vendor}}</span></div>
+                            <div v-else-if="col.key === 'name'"><v-text-field v-if="editingId===ex.id" v-model="editForm.name" density="compact" variant="outlined" hide-details></v-text-field><span v-else>{{ex.name}}</span></div>
+                            <div v-else-if="col.key === 'expected_date'"><v-text-field v-if="editingId===ex.id" v-model="editForm.expected_date" density="compact" variant="outlined" hide-details type="number"></v-text-field><span v-else>{{ex.expected_date}}</span></div>
+                            <div v-else-if="col.key === 'amount'"><v-text-field v-if="editingId===ex.id" v-model.number="editForm.amount" density="compact" variant="outlined" hide-details></v-text-field><span v-else>£{{ex.amount.toFixed(2)}}</span></div>
+                            <div v-else-if="col.key === 'category'"><v-select v-if="editingId===ex.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined" hide-details></v-select><span v-else>{{ex.category}}</span></div>
                             <div v-else-if="col.key === 'actions'">
                                 <div v-if="editingId===ex.id"><v-btn icon="mdi-check" size="small" variant="text" color="green" @click="saveItem"></v-btn></div>
                                 <div v-else><v-btn icon="mdi-pencil" size="small" variant="text" color="grey" @click="startEdit(ex)"></v-btn><v-btn icon="mdi-delete" size="small" variant="text" color="grey" @click="deleteItem(ex.id)"></v-btn></div>
                             </div>
                         </td>
                     </tr>
-                    <tr class="font-weight-bold" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'"><td colspan="2">TOTAL</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
+                    <tr class="font-weight-bold" :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'"><td :colspan="columns.length - 2">TOTAL</td><td class="text-right text-red">£{{ total.toFixed(2) }}</td><td colspan="2"></td></tr>
                 </tbody>
             </v-table>
             <v-card-actions class="justify-end"><v-btn color="error" @click="clear">Clear All</v-btn></v-card-actions>
@@ -131,5 +138,5 @@ onMounted(fetchSandbox);
 
 <style scoped>
 .cursor-move { cursor: move; }
-.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
+.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; border-right: 1px solid rgba(0,0,0,0.1); }
 </style>

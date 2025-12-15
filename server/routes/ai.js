@@ -21,7 +21,7 @@ router.post('/ai/generate', async (req, res) => {
     const year = params?.year || (new Date()).getFullYear();
 
     const keysToFetch = [
-        'ollama_url', 'ollama_model', 'default_salary',
+        'ollama_url', 'ollama_model', 'default_salary', 'pay_day',
         'prompt_budget', 'prompt_savings', 'prompt_credit_cards', 'prompt_dashboard',
         'prompt_meals', 'prompt_birthdays', 'prompt_christmas', 'prompt_sandbox', 'prompt_mortgage'
     ];
@@ -35,6 +35,7 @@ router.post('/ai/generate', async (req, res) => {
         
         const OLLAMA_URL = settings.ollama_url;
         const MODEL = settings.ollama_model || 'llama3';
+        const PAY_DAY = parseInt(settings.pay_day) || 25;
 
         if (!OLLAMA_URL) return res.json({ success: false, error: "Ollama URL not configured in Settings." });
 
@@ -42,7 +43,9 @@ router.post('/ai/generate', async (req, res) => {
 
         const callOllama = async (promptText) => {
             try {
-                const finalPrompt = promptText.includes("British Pounds") ? promptText : promptText + "\n\nKeep the tone helpful and objective. Use British Pounds (£).";
+                // Base instruction for currency
+                let finalPrompt = promptText.includes("British Pounds") ? promptText : promptText + "\n\nKeep the tone helpful and objective. Use British Pounds (£).";
+                
                 const response = await fetch(`${OLLAMA_URL}/api/generate`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ model: MODEL, prompt: finalPrompt, stream: false })
@@ -55,23 +58,60 @@ router.post('/ai/generate', async (req, res) => {
 
         if (requestType === 'budget') {
              if (!month) return res.status(400).json({ error: "Month required for budget summary" });
+             
              db.get("SELECT amount as balance, salary FROM monthly_balances WHERE month = ?", [month], (err, balanceRow) => {
                 const income = balanceRow ? (balanceRow.salary || settings.default_salary || 0) : 0;
                 const currentBalance = balanceRow ? balanceRow.balance : 0;
+                
                 db.all("SELECT name, amount, category, paid FROM expenses WHERE month = ?", [month], (err, expenses) => {
                     const totalExpenses = expenses.reduce((sum, ex) => sum + Math.abs(ex.amount), 0);
                     const unpaid = expenses.filter(e => !e.paid);
+                    
+                    // --- DATE & CONTEXT CALCULATION ---
+                    const today = new Date();
+                    const currentDay = today.getDate();
+                    const currentDateString = today.toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                    
+                    // Determine if we are "in" this budget month
+                    // (Simplification: assuming budget month string 'YYYY-MM' matches calendar month)
+                    const [bYear, bMonth] = month.split('-').map(Number);
+                    const isCurrentMonth = today.getFullYear() === bYear && (today.getMonth() + 1) === bMonth;
+                    
+                    let timeContext = `Today is ${currentDateString}.`;
+                    if (isCurrentMonth) {
+                        let daysLeft = PAY_DAY - currentDay;
+                        if (daysLeft < 0) daysLeft += 30; // Rough calc for next month
+                        timeContext += ` We are in the active budget month. Roughly ${daysLeft} days until Pay Day (${PAY_DAY}th).`;
+                    } else if (today < new Date(bYear, bMonth - 1, 1)) {
+                        timeContext += " This is a future budget.";
+                    } else {
+                        timeContext += " This is a past budget.";
+                    }
+
                     const categories = {};
                     expenses.forEach(ex => {
                         const cat = ex.category || 'Uncategorized';
                         if (!categories[cat]) categories[cat] = 0;
                         categories[cat] += Math.abs(ex.amount);
                     });
+                    
                     const unpaidText = unpaid.length > 0 ? unpaid.map(e => `- ${e.name}: £${Math.abs(e.amount).toFixed(2)}`).join('\n') : "All bills paid!";
                     const categoryText = Object.entries(categories).sort(([,a], [,b]) => b - a).map(([k,v]) => `- ${k}: £${v.toFixed(2)}`).join('\n');
                     const topExpenses = [...expenses].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 10).map(e => `- ${e.name}: £${Math.abs(e.amount).toFixed(2)} (${e.category})`).join('\n');
-                    const template = settings.prompt_budget || `Act as a financial advisor. Analyze this budget for {{month}}.\n\n**Status:** Income: £{{income}}, Expenses: £{{expenses}}, Balance: £{{balance}}\n\n**UNPAID BILLS:**\n{{unpaid_text}}\n\n**Spending:**\n{{category_text}}\n\n**Largest:**\n{{top_expenses}}\n\nProvide a summary focusing on upcoming obligations and month outlook.`;
-                    callOllama(formatPrompt(template, { month, income: income, expenses: totalExpenses.toFixed(2), balance: currentBalance, unpaid_text: unpaidText, category_text: categoryText, top_expenses: topExpenses }));
+                    
+                    // Default Prompt with added context variables
+                    const template = settings.prompt_budget || `Act as a financial advisor. Analyze this budget for {{month}}.\n\n**Context:** {{date_context}}\n\n**Status:** Income: £{{income}}, Expenses: £{{expenses}}, Current Balance: £{{balance}}\n\n**UNPAID BILLS (Future/Pending):**\nThese items have NOT yet been paid/deducted:\n{{unpaid_text}}\n\n**Spending Breakdown:**\n{{category_text}}\n\n**Largest Expenses:**\n{{top_expenses}}\n\nProvide a summary focusing on upcoming obligations and month outlook based on the date.`;
+                    
+                    callOllama(formatPrompt(template, { 
+                        month, 
+                        income: income, 
+                        expenses: totalExpenses.toFixed(2), 
+                        balance: currentBalance, 
+                        unpaid_text: unpaidText, 
+                        category_text: categoryText, 
+                        top_expenses: topExpenses,
+                        date_context: timeContext // New Variable
+                    }));
                 });
             });
         } else if (requestType === 'savings') {

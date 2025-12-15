@@ -143,5 +143,5 @@ onMounted(() => { fetchChristmas(); fetchPots(); fetchSettings(); });
 
 <style scoped>
 .cursor-move { cursor: move; }
-.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
+.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; border-right: 1px solid rgba(0,0,0,0.1); }
 </style>
