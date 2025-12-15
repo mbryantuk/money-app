@@ -13,18 +13,21 @@
   import SandboxTab from './components/SandboxTab.vue';
   import AdminTab from './components/AdminTab.vue';
   import SettingsTab from './components/SettingsTab.vue';
+  import TemplatesTab from './components/TemplatesTab.vue'; 
   import ReportsTab from './components/ReportsTab.vue';
   import CreditCardsTab from './components/CreditCardsTab.vue';
   import MealsTab from './components/MealsTab.vue';
   import BirthdaysTab from './components/BirthdaysTab.vue'; 
-  
+  import AiSummaryTab from './components/AiSummaryTab.vue'; 
+  import BackupManager from './components/BackupManager.vue'; // IMPORTED
+
   // --- STATE MANAGEMENT ---
   const theme = useTheme();
   const { mobile } = useDisplay();
   
   // Navigation & Layout
-  const drawer = ref(null);
-  const openList = ref(['admin_group']); 
+  const drawer = ref(!mobile.value);
+  const openList = ref([]); 
   const tab = ref('dashboard');
   
   // Calculator State
@@ -40,17 +43,41 @@
   const savingsPos = ref({ x: 340, y: 100 });
   const isDraggingSavings = ref(false);
   const savingsDragOffset = ref({ x: 0, y: 0 });
+
+  // AI POPUP STATE
+  const showAiDialog = ref(false);
+  const aiLoading = ref(false);
+  const aiResponse = ref('');
+  const aiError = ref('');
+  const aiPos = ref({ x: 50, y: 120 }); 
+  const isDraggingAi = ref(false);
+  const aiDragOffset = ref({ x: 0, y: 0 });
   
   // Data State
   const currentMonth = ref(new Date().toISOString().slice(0, 7));
-  const availablePeople = ref([]); // Budget Accounts
-  const familyMembers = ref([]);   // Meal Plan People (NEW)
+  const availablePeople = ref([]); 
+  const familyMembers = ref([]);   
   const availableCategories = ref([]);
   const defaultSalary = ref(0);
   const payDay = ref(1);
   const templates = ref([]);
   const birthdays = ref([]);
   
+  // AI Settings State
+  const ollamaUrl = ref('');
+  const ollamaModel = ref('');
+  const aiPrompts = ref({
+    budget: '',
+    dashboard: '',
+    savings: '',
+    credit_cards: '',
+    meals: '',
+    birthdays: '',
+    christmas: '',
+    sandbox: '',
+    mortgage: ''
+  });
+
   // Notification Snackbar
   const snackbar = ref(false);
   const snackbarText = ref('');
@@ -92,7 +119,7 @@
       } catch (e) { showMsg('Error saving pot', 'error'); }
   };
 
-  // Dragging Logic
+  // Dragging Logic 
   const startDragSavings = (e) => {
       if(e.target.closest('.no-drag')) return; 
       isDraggingSavings.value = true;
@@ -108,6 +135,76 @@
       isDraggingSavings.value = false;
       window.removeEventListener('mousemove', onDragSavings);
       window.removeEventListener('mouseup', stopDragSavings);
+  };
+
+  // --- AI LOGIC ---
+  const isAiAvailable = computed(() => {
+    return ['dashboard', 'budget', 'savings', 'credit_cards', 'mortgage', 'meals', 'birthdays', 'christmas', 'sandbox'].includes(tab.value);
+  });
+
+  const generateAiSummary = async () => {
+    showAiDialog.value = true;
+    aiLoading.value = true;
+    aiResponse.value = '';
+    aiError.value = '';
+
+    let type = 'general';
+    let params = {};
+
+    if (tab.value === 'budget') {
+        type = 'budget';
+        params = { month: currentMonth.value };
+    } else if (tab.value === 'dashboard') {
+        type = 'dashboard';
+        params = { year: parseInt(currentMonth.value.split('-')[0]) };
+    } else if (tab.value === 'savings') {
+        type = 'savings';
+    } else if (tab.value === 'credit_cards') {
+        type = 'credit_cards';
+    } else if (tab.value === 'meals') {
+        type = 'meals';
+    } else if (tab.value === 'birthdays') {
+        type = 'birthdays';
+    } else if (tab.value === 'christmas') {
+        type = 'christmas';
+    } else if (tab.value === 'sandbox') {
+        type = 'sandbox';
+    } else if (tab.value === 'mortgage') {
+        type = 'mortgage';
+    } else {
+        type = tab.value; 
+    }
+
+    try {
+        const res = await axios.post('/api/ai/generate', { type, params });
+        if (res.data.success) {
+            aiResponse.value = res.data.response;
+        } else {
+            aiError.value = res.data.error || 'Unknown AI Error';
+        }
+    } catch (e) {
+        console.error(e);
+        aiError.value = 'Failed to connect to AI server.';
+    } finally {
+        aiLoading.value = false;
+    }
+  };
+
+  const startDragAi = (e) => {
+      if(e.target.closest('.no-drag')) return; 
+      isDraggingAi.value = true;
+      aiDragOffset.value = { x: e.clientX - aiPos.value.x, y: e.clientY - aiPos.value.y };
+      window.addEventListener('mousemove', onDragAi);
+      window.addEventListener('mouseup', stopDragAi);
+  };
+  const onDragAi = (e) => {
+      if (!isDraggingAi.value) return;
+      aiPos.value = { x: e.clientX - aiDragOffset.value.x, y: e.clientY - aiDragOffset.value.y };
+  };
+  const stopDragAi = () => {
+      isDraggingAi.value = false;
+      window.removeEventListener('mousemove', onDragAi);
+      window.removeEventListener('mouseup', stopDragAi);
   };
 
   // --- CALCULATOR LOGIC ---
@@ -207,17 +304,28 @@
       ]);
       const settings = settingsRes.data || {};
       
-      // Load Budget Accounts
       if (settings.people) availablePeople.value = JSON.parse(settings.people);
-      
-      // Load Family Members (Meals) - Added this line
       if (settings.family_members) familyMembers.value = JSON.parse(settings.family_members);
-      
-      // Load Categories
       if (settings.categories) availableCategories.value = JSON.parse(settings.categories);
       
       defaultSalary.value = parseFloat(settings.default_salary) || 0;
       payDay.value = parseInt(settings.pay_day) || 1;
+      ollamaUrl.value = settings.ollama_url || '';
+      ollamaModel.value = settings.ollama_model || '';
+
+      // Load prompts
+      aiPrompts.value = {
+        budget: settings.prompt_budget || '',
+        dashboard: settings.prompt_dashboard || '',
+        savings: settings.prompt_savings || '',
+        credit_cards: settings.prompt_credit_cards || '',
+        meals: settings.prompt_meals || '',
+        birthdays: settings.prompt_birthdays || '',
+        christmas: settings.prompt_christmas || '',
+        sandbox: settings.prompt_sandbox || '',
+        mortgage: settings.prompt_mortgage || ''
+      };
+
       templates.value = templatesRes.data || [];
       birthdays.value = birthdaysRes.data || []; 
   
@@ -243,12 +351,13 @@
     window.removeEventListener('keydown', handleKeydown);
     stopDragCalc(); 
     stopDragSavings();
+    stopDragAi();
   });
   </script>
   
   <template>
     <v-app>
-      <v-navigation-drawer v-model="drawer" :temporary="mobile" :permanent="!mobile" color="surface">
+      <v-navigation-drawer v-model="drawer" :temporary="mobile" color="surface">
         <div class="d-flex justify-center py-4">
           <img src="/logo.svg" alt="Logo" width="48" height="48" />
           <span class="text-h6 ml-3 align-self-center text-primary font-weight-bold">Money</span>
@@ -271,12 +380,15 @@
               <v-list-item v-bind="props" prepend-icon="mdi-chart-box-outline" title="Reports" rounded="xl"></v-list-item>
             </template>
             <v-list-item prepend-icon="mdi-chart-line" title="Salary Tracker" value="reports" @click="selectTab('reports')" :active="tab === 'reports'" color="primary" rounded="xl"></v-list-item>
+            <v-list-item prepend-icon="mdi-robot-outline" title="AI Summary" value="ai_summary" @click="selectTab('ai_summary')" :active="tab === 'ai_summary'" color="primary" rounded="xl"></v-list-item>
           </v-list-group>
   
           <v-list-group value="admin_group">
             <template v-slot:activator="{ props }">
               <v-list-item v-bind="props" prepend-icon="mdi-shield-account-outline" title="Admin" rounded="xl"></v-list-item>
             </template>
+            <v-list-item prepend-icon="mdi-database" title="Backups" value="admin_backups" @click="selectTab('admin_backups')" :active="tab === 'admin_backups'" color="primary" rounded="xl"></v-list-item>
+            
             <v-list-item prepend-icon="mdi-calendar-month" title="Salary Data" value="admin_salary" @click="selectTab('admin_salary')" :active="tab === 'admin_salary'" color="primary" rounded="xl"></v-list-item>
             <v-list-item prepend-icon="mdi-cash-multiple" title="Recent Expenses" value="admin_expenses" @click="selectTab('admin_expenses')" :active="tab === 'admin_expenses'" color="primary" rounded="xl"></v-list-item>
             <v-list-item prepend-icon="mdi-file-document-outline" title="Templates" value="admin_templates" @click="selectTab('admin_templates')" :active="tab === 'admin_templates'" color="primary" rounded="xl"></v-list-item>
@@ -289,24 +401,41 @@
             <v-list-item prepend-icon="mdi-test-tube" title="Sandbox Data" value="admin_sandbox_expenses" @click="selectTab('admin_sandbox_expenses')" :active="tab === 'admin_sandbox_expenses'" color="primary" rounded="xl"></v-list-item>
           </v-list-group>
   
-          <v-list-item prepend-icon="mdi-cog-outline" title="Settings" value="settings" @click="selectTab('settings')" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
+          <v-list-group value="settings_group">
+            <template v-slot:activator="{ props }">
+              <v-list-item v-bind="props" prepend-icon="mdi-cog-outline" title="Settings" rounded="xl"></v-list-item>
+            </template>
+            <v-list-item prepend-icon="mdi-tune" title="General Settings" value="settings" @click="selectTab('settings')" :active="tab === 'settings'" color="primary" rounded="xl"></v-list-item>
+            <v-list-item prepend-icon="mdi-playlist-star" title="Master Bill List" value="templates" @click="selectTab('templates')" :active="tab === 'templates'" color="primary" rounded="xl"></v-list-item>
+          </v-list-group>
         </v-list>
       </v-navigation-drawer>
   
       <v-app-bar color="surface" density="compact" flat border>
-        <v-app-bar-nav-icon v-if="mobile" @click="drawer = !drawer"></v-app-bar-nav-icon>
+        <v-app-bar-nav-icon @click="drawer = !drawer"></v-app-bar-nav-icon>
         <v-app-bar-title class="text-primary font-weight-bold text-uppercase">{{ tab.replace('admin_', '') }}</v-app-bar-title>
         <v-spacer></v-spacer>
         
         <v-btn icon color="primary" :variant="showSavings ? 'tonal' : 'text'" @click="toggleSavings" title="Savings"><v-icon>mdi-piggy-bank</v-icon></v-btn>
         
+        <v-btn 
+            v-if="isAiAvailable"
+            icon 
+            color="primary" 
+            :variant="showAiDialog ? 'tonal' : 'text'" 
+            @click="generateAiSummary" 
+            title="AI Summary"
+        >
+            <v-icon>mdi-robot-outline</v-icon>
+        </v-btn>
+
         <v-btn icon color="primary" :variant="showCalculator ? 'tonal' : 'text'" @click="showCalculator = !showCalculator" title="Calculator"><v-icon>mdi-calculator</v-icon></v-btn>
         
         <v-btn icon color="primary" @click="toggleTheme"><v-icon>{{ isDark ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon></v-btn>
       </v-app-bar>
   
       <v-main :class="isDark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4'">
-        <v-container class="py-6" fluid style="max-width: 1400px;">
+        <v-container class="py-6" fluid>
           <DashboardTab v-if="tab === 'dashboard'" />
           <BudgetTab v-if="tab === 'budget' && currentMonth" v-model:month="currentMonth" :people="availablePeople" :categories="availableCategories" :default-salary="defaultSalary" :pay-day="payDay" :birthdays="birthdays" @notify="showMsg" />
           <SavingsTab v-if="tab === 'savings'" @notify="showMsg" />
@@ -315,10 +444,13 @@
           <MealsTab v-if="tab === 'meals'" :people="familyMembers" @notify="showMsg" />
           <BirthdaysTab v-if="tab === 'birthdays'" @notify="showMsg" /> <ChristmasTab v-if="tab === 'christmas'" @notify="showMsg" />
           <ReportsTab v-if="tab === 'reports'" /> 
+          <AiSummaryTab v-if="tab === 'ai_summary'" :current-month="currentMonth" @notify="showMsg" />
           <SandboxTab v-if="tab === 'sandbox'" :people="availablePeople" :categories="availableCategories" :current-month="currentMonth" @notify="showMsg" />
           
-          <AdminTab v-if="tab.startsWith('admin_')" :view="tab" @notify="showMsg" />
+          <AdminTab v-if="tab.startsWith('admin_') && tab !== 'admin_backups'" :view="tab" @notify="showMsg" />
           
+          <BackupManager v-if="tab === 'admin_backups'" @notify="showMsg" />
+
           <SettingsTab 
               v-if="tab === 'settings'" 
               v-model:people="availablePeople" 
@@ -326,13 +458,24 @@
               v-model:categories="availableCategories" 
               v-model:default-salary="defaultSalary" 
               v-model:pay-day="payDay" 
-              :templates="templates" 
+              v-model:ollama-url="ollamaUrl"
+              v-model:ollama-model="ollamaModel"
+              :prompts="aiPrompts" 
               @notify="showMsg" 
               @refresh="fetchSettings" 
           />
+
+          <TemplatesTab 
+              v-if="tab === 'templates'" 
+              :people="availablePeople"
+              :categories="availableCategories"
+              :templates="templates"
+              @notify="showMsg"
+              @refresh="fetchSettings"
+          />
         </v-container>
       </v-main>
-  
+      
       <v-card 
           v-if="showSavings" 
           class="position-fixed rounded-lg border" 
@@ -407,6 +550,31 @@
         </v-card-text>
       </v-card>
 
+      <v-card
+        v-if="showAiDialog"
+        class="position-fixed rounded-lg border"
+        style="z-index: 9999; width: 500px; max-height: 600px; display: flex; flex-direction: column;"
+        :style="{ left: aiPos.x + 'px', top: aiPos.y + 'px' }"
+        elevation="12"
+      >
+        <v-card-title class="bg-primary text-white d-flex align-center justify-space-between cursor-move" @mousedown="startDragAi">
+            <span>AI Insight: {{ tab.toUpperCase().replace('_', ' ') }}</span>
+            <v-btn icon="mdi-close" variant="text" color="white" @click="showAiDialog = false"></v-btn>
+        </v-card-title>
+        
+        <v-card-text class="pa-4 flex-grow-1 overflow-y-auto no-drag" style="min-height: 200px">
+            <div v-if="aiLoading" class="d-flex flex-column align-center justify-center py-8">
+                <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
+                <div class="mt-4 text-caption text-grey">Analyzing data...</div>
+            </div>
+            <div v-else-if="aiError" class="text-center text-error py-4">
+                <v-icon color="error" size="large" class="mb-2">mdi-alert-circle</v-icon>
+                <div>{{ aiError }}</div>
+            </div>
+            <div v-else style="white-space: pre-wrap; line-height: 1.6">{{ aiResponse }}</div>
+        </v-card-text>
+      </v-card>
+
       <v-snackbar v-model="snackbar" :color="snackbarColor" timeout="3000" location="bottom right">
         {{ snackbarText }}
         <template v-slot:actions><v-btn variant="text" @click="snackbar = false">Close</v-btn></template>
@@ -417,4 +585,5 @@
 <style scoped>
 .cursor-move { cursor: move; }
 .min-height-40 { min-height: 40px; }
+.no-drag { cursor: text; }
 </style>

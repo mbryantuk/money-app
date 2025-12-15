@@ -4,7 +4,7 @@
   
   // Props
   const props = defineProps({
-    people: { type: Array, default: () => [] } // Receives 'familyMembers' from App.vue
+    people: { type: Array, default: () => [] } 
   });
 
   const emit = defineEmits(['notify']);
@@ -13,15 +13,20 @@
   const meals = ref([]);
   const plan = ref([]);
   const slots = ['Breakfast', 'Lunch', 'Dinner'];
+  const mealTypes = ['Breakfast', 'Lunch', 'Dinner'];
   
   // Library Dialog
   const dialog = ref(false);
-  const editedItem = ref({ id: null, name: '', description: '', tags: [] }); 
-  const defaultItem = { id: null, name: '', description: '', tags: [] };
+  const editedItem = ref({ id: null, name: '', description: '', tags: [], type: 'Dinner' }); 
+  const defaultItem = { id: null, name: '', description: '', tags: [], type: 'Dinner' };
 
   // Assignment Dialog
   const assignDialog = ref(false);
   const assignForm = ref({ date: null, slot: null, meal_id: null, who: [] });
+
+  // Copy Meal Dialog
+  const copyDialog = ref(false);
+  const copyForm = ref({ sourceMeal: null, targetDate: null, targetSlot: null });
   
   const weekOffset = ref(0);
   
@@ -35,11 +40,28 @@
       console.error("Error fetching data", err);
     }
   };
+
+  // Group meals by type for the sidebar
+  const mealsByType = computed(() => {
+    const groups = { Breakfast: [], Lunch: [], Dinner: [] };
+    meals.value.forEach(meal => {
+        const type = (meal.type && groups[meal.type]) ? meal.type : 'Dinner';
+        groups[type].push(meal);
+    });
+    return groups;
+  });
+
+  // Filter meals for the Assignment Dialog based on the selected Slot
+  const filteredMealsForAssign = computed(() => {
+      const targetSlot = assignForm.value.slot;
+      if (!targetSlot) return meals.value;
+      // Default to 'Dinner' if type is missing, to match Sidebar logic
+      return meals.value.filter(m => (m.type || 'Dinner') === targetSlot);
+  });
   
   // Computed Week Dates
   const weekDates = computed(() => {
     const d = new Date();
-    // Adjust for current day of week (Monday = 1)
     const day = d.getDay() || 7;
     if (day !== 1) d.setHours(-24 * (day - 1));
     d.setDate(d.getDate() + (weekOffset.value * 7));
@@ -62,21 +84,21 @@
   };
   
   // Actions
-  const getMealForSlot = (date, slot) => {
-    return plan.value.find(p => p.date === date && p.slot === slot);
+  const getMealsForSlot = (date, slot) => {
+    return plan.value.filter(p => p.date === date && p.slot === slot);
   };
 
-  // Check if every family member is covered for this specific meal slot
   const isSlotComplete = (date, slot) => {
-      const meal = getMealForSlot(date, slot);
-      if (!meal) return false;
-      const whoList = meal.who || [];
-      // Check if every person in props.people is in the meal's who list
-      return props.people.length > 0 && props.people.every(p => whoList.includes(p));
+      const meals = getMealsForSlot(date, slot);
+      if (!meals.length) return false;
+      const allFed = new Set();
+      meals.forEach(m => {
+          if (Array.isArray(m.who)) m.who.forEach(p => allFed.add(p));
+      });
+      return props.people.length > 0 && props.people.every(p => allFed.has(p));
   };
   
   const openAssignDialog = (date, slot) => {
-      // Default to everyone in the family list
       assignForm.value = { 
           date, 
           slot, 
@@ -92,6 +114,85 @@
       assignDialog.value = false;
       fetchPlan();
       emit('notify', 'Meal assigned');
+  };
+
+  // --- COPY LOGIC ---
+  
+  const openCopyDialog = (mealItem) => {
+      // Find the meal object to get its details
+      const originalMeal = meals.value.find(m => m.id === mealItem.meal_id);
+      
+      copyForm.value = {
+          sourceMeal: mealItem,
+          originalName: originalMeal ? originalMeal.name : 'Unknown Meal',
+          targetDate: mealItem.date, // Default to same day
+          targetSlot: mealItem.slot, // Default to same slot
+          who: mealItem.who // Keep same people
+      };
+      copyDialog.value = true;
+  };
+
+  const confirmCopy = async () => {
+      if(!copyForm.value.targetDate || !copyForm.value.targetSlot) return;
+
+      await axios.post('/api/meal-plan', {
+          date: copyForm.value.targetDate,
+          slot: copyForm.value.targetSlot,
+          meal_id: copyForm.value.sourceMeal.meal_id,
+          who: copyForm.value.who
+      });
+      
+      copyDialog.value = false;
+      fetchPlan();
+      emit('notify', 'Meal Copied');
+  };
+
+  const copyLastWeek = async () => {
+      if(!confirm("Copy the entire plan from the previous week? This will add to existing meals.")) return;
+
+      // 1. Calculate Previous Week Range
+      const currentStart = new Date(weekDates.value[0].date);
+      const prevStart = new Date(currentStart);
+      prevStart.setDate(prevStart.getDate() - 7);
+      
+      const prevEnd = new Date(prevStart);
+      prevEnd.setDate(prevEnd.getDate() + 6);
+      
+      const sStr = prevStart.toISOString().split('T')[0];
+      const eStr = prevEnd.toISOString().split('T')[0];
+
+      try {
+          // 2. Fetch Previous Week
+          const res = await axios.get(`/api/meal-plan?start=${sStr}&end=${eStr}`);
+          const prevMeals = res.data;
+
+          if(!prevMeals.length) {
+              emit('notify', 'No meals found in previous week', 'warning');
+              return;
+          }
+
+          // 3. Post to Current Week (Shift date by +7 days)
+          const promises = prevMeals.map(p => {
+              const oldDate = new Date(p.date);
+              oldDate.setDate(oldDate.getDate() + 7);
+              const newDate = oldDate.toISOString().split('T')[0];
+              
+              return axios.post('/api/meal-plan', {
+                  date: newDate,
+                  slot: p.slot,
+                  meal_id: p.meal_id,
+                  who: p.who
+              });
+          });
+
+          await Promise.all(promises);
+          fetchPlan();
+          emit('notify', `Copied ${prevMeals.length} meals from last week`);
+
+      } catch(e) {
+          console.error(e);
+          emit('notify', 'Error copying week', 'error');
+      }
   };
   
   const removeAssignment = async (id) => {
@@ -133,22 +234,27 @@
 <template>
 <v-row>
   <v-col cols="12" md="4">
-    <v-card class="fill-height" elevation="2">
+    <v-card class="fill-height d-flex flex-column" elevation="2">
       <v-card-title class="d-flex justify-space-between align-center bg-blue-grey-lighten-5">
         Meal Library
         <v-btn color="primary" size="small" icon="mdi-plus" @click="openDialog()"></v-btn>
       </v-card-title>
-      <v-list class="overflow-y-auto" style="max-height: 700px">
-        <v-list-item v-for="meal in meals" :key="meal.id" lines="two">
-          <v-list-item-title class="font-weight-bold">{{ meal.name }}</v-list-item-title>
-          <v-list-item-subtitle>{{ meal.description }}</v-list-item-subtitle>
-          <template v-slot:append>
-            <div class="d-flex align-center">
-              <v-btn icon="mdi-pencil" size="small" variant="text" color="grey" @click="openDialog(meal)"></v-btn>
-              <v-btn icon="mdi-delete" size="small" color="error" variant="text" @click="deleteMeal(meal.id)"></v-btn>
-            </div>
-          </template>
-        </v-list-item>
+      
+      <v-list class="overflow-y-auto flex-grow-1" style="max-height: 75vh">
+        <template v-for="type in mealTypes" :key="type">
+            <v-list-subheader class="font-weight-bold text-uppercase bg-grey-lighten-4">{{ type }}</v-list-subheader>
+            <v-list-item v-for="meal in mealsByType[type]" :key="meal.id" lines="two">
+                <v-list-item-title class="font-weight-bold">{{ meal.name }}</v-list-item-title>
+                <v-list-item-subtitle class="text-caption">{{ meal.description }}</v-list-item-subtitle>
+                <template v-slot:append>
+                    <div class="d-flex align-center">
+                    <v-btn icon="mdi-pencil" size="small" variant="text" color="grey" @click="openDialog(meal)"></v-btn>
+                    <v-btn icon="mdi-delete" size="small" color="error" variant="text" @click="deleteMeal(meal.id)"></v-btn>
+                    </div>
+                </template>
+            </v-list-item>
+            <v-divider></v-divider>
+        </template>
       </v-list>
     </v-card>
   </v-col>
@@ -156,9 +262,12 @@
   <v-col cols="12" md="8">
     <v-card>
       <v-card-title class="d-flex align-center justify-space-between bg-primary text-white">
-        <v-btn icon="mdi-chevron-left" variant="text" color="white" @click="changeWeek(-1)"></v-btn>
-        <span>Week of {{ weekDates[0].date }}</span>
-        <v-btn icon="mdi-chevron-right" variant="text" color="white" @click="changeWeek(1)"></v-btn>
+        <div class="d-flex align-center">
+            <v-btn icon="mdi-chevron-left" variant="text" color="white" @click="changeWeek(-1)"></v-btn>
+            <span>Week of {{ weekDates[0].date }}</span>
+            <v-btn icon="mdi-chevron-right" variant="text" color="white" @click="changeWeek(1)"></v-btn>
+        </div>
+        <v-btn variant="tonal" color="white" prepend-icon="mdi-content-copy" size="small" @click="copyLastWeek">Copy Last Week</v-btn>
       </v-card-title>
       
       <div class="pa-2 bg-grey-lighten-4 fill-height">
@@ -172,26 +281,28 @@
                   </div>
 
                   <div class="flex-grow-1 pa-1 d-flex flex-column">
-                      <div v-for="slot in slots" :key="slot" class="d-flex align-center border-b py-1" style="min-height: 40px;">
-                          <div style="width: 100px;" class="d-flex align-center pl-2">
-                              <span class="text-caption font-weight-bold text-medium-emphasis mr-1">{{ slot }}</span>
-                              <v-icon v-if="isSlotComplete(day.date, slot)" color="green" size="small">mdi-check-circle</v-icon>
+                      <div v-for="slot in slots" :key="slot" class="d-flex flex-column border-b py-1" style="min-height: 40px;">
+                          <div class="d-flex align-center pl-2 justify-space-between bg-grey-lighten-5">
+                              <div class="d-flex align-center">
+                                  <span class="text-caption font-weight-bold text-medium-emphasis mr-1">{{ slot }}</span>
+                                  <v-icon v-if="isSlotComplete(day.date, slot)" color="green" size="small">mdi-check-circle</v-icon>
+                              </div>
+                              <v-btn size="x-small" variant="text" icon="mdi-plus" color="primary" @click="openAssignDialog(day.date, slot)" title="Add Meal"></v-btn>
                           </div>
                           
-                          <div class="flex-grow-1">
-                              <template v-if="getMealForSlot(day.date, slot)">
-                                  <div class="d-flex align-center justify-space-between px-2 rounded bg-blue-grey-lighten-5 ma-1">
-                                      <div>
-                                          <span class="text-body-2 font-weight-bold mr-2">{{ getMealForSlot(day.date, slot).name }}</span>
-                                          <v-chip v-for="p in getMealForSlot(day.date, slot).who" :key="p" size="x-small" density="compact" class="mr-1" style="height: 18px;">{{ p }}</v-chip>
-                                      </div>
-                                      <v-btn icon="mdi-close" size="x-small" variant="text" color="grey" @click="removeAssignment(getMealForSlot(day.date, slot).id)"></v-btn>
+                          <div v-if="getMealsForSlot(day.date, slot).length">
+                              <div v-for="mealPlanItem in getMealsForSlot(day.date, slot)" :key="mealPlanItem.id" class="d-flex align-center justify-space-between px-2 rounded bg-blue-grey-lighten-5 ma-1 border">
+                                  <div>
+                                      <span class="text-body-2 font-weight-bold mr-2">{{ mealPlanItem.name }}</span>
+                                      <v-chip v-for="p in mealPlanItem.who" :key="p" size="x-small" density="compact" class="mr-1" style="height: 18px;">{{ p }}</v-chip>
                                   </div>
-                              </template>
-                              <template v-else>
-                                  <v-btn size="x-small" variant="text" color="grey" class="ml-2" @click="openAssignDialog(day.date, slot)">+ Add</v-btn>
-                              </template>
+                                  <div>
+                                      <v-btn icon="mdi-content-copy" size="x-small" variant="text" color="blue" @click="openCopyDialog(mealPlanItem)" title="Copy to another day"></v-btn>
+                                      <v-btn icon="mdi-close" size="x-small" variant="text" color="grey" @click="removeAssignment(mealPlanItem.id)"></v-btn>
+                                  </div>
+                              </div>
                           </div>
+                          <div v-else class="text-caption text-grey font-italic pl-2">-</div>
                       </div>
                   </div>
               </div>
@@ -208,6 +319,7 @@
     <v-card-title>{{ editedItem.id ? 'Edit' : 'New' }} Meal</v-card-title>
     <v-card-text>
       <v-text-field v-model="editedItem.name" label="Name" autofocus variant="outlined"></v-text-field>
+      <v-select v-model="editedItem.type" :items="mealTypes" label="Meal Type" variant="outlined"></v-select>
       <v-textarea v-model="editedItem.description" label="Description" rows="2" variant="outlined"></v-textarea>
       <v-combobox v-model="editedItem.tags" label="Generic Tags (e.g. Quick, Pasta)" multiple chips variant="outlined"></v-combobox> 
     </v-card-text>
@@ -225,7 +337,7 @@
       <v-card-text>
           <v-select 
               v-model="assignForm.meal_id" 
-              :items="meals" 
+              :items="filteredMealsForAssign" 
               item-title="name" 
               item-value="id" 
               label="Select Meal" 
@@ -247,5 +359,21 @@
           <v-btn color="primary" variant="flat" @click="confirmAssign">Add to Day</v-btn>
       </v-card-actions>
   </v-card>
+</v-dialog>
+
+<v-dialog v-model="copyDialog" max-width="400px">
+    <v-card>
+        <v-card-title>Copy Meal</v-card-title>
+        <v-card-text>
+            <div class="text-subtitle-1 mb-2">Copying: <strong>{{ copyForm.originalName }}</strong></div>
+            <v-text-field label="To Date" type="date" v-model="copyForm.targetDate" variant="outlined"></v-text-field>
+            <v-select label="To Slot" :items="slots" v-model="copyForm.targetSlot" variant="outlined"></v-select>
+        </v-card-text>
+        <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn color="grey" variant="text" @click="copyDialog = false">Cancel</v-btn>
+            <v-btn color="primary" variant="flat" @click="confirmCopy">Copy</v-btn>
+        </v-card-actions>
+    </v-card>
 </v-dialog>
 </template>

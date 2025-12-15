@@ -15,28 +15,19 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS sandbox_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, amount REAL, category TEXT, who TEXT, paid INTEGER DEFAULT 0)`);
     db.run(`CREATE TABLE IF NOT EXISTS sandbox_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, salary REAL, items TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS christmas_list (id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT, item TEXT, amount REAL, bought INTEGER DEFAULT 0)`);
+    // --- CREDIT CARDS ---
     db.run(`CREATE TABLE IF NOT EXISTS credit_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, limit_amount REAL, interest_rate REAL, balance REAL)`);
     db.run(`CREATE TABLE IF NOT EXISTS cc_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, card_id INTEGER, date TEXT, description TEXT, amount REAL, category TEXT, paid INTEGER DEFAULT 0)`);
-    db.run(`CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, tags TEXT)`);
     
-    // --- MIGRATION FOR MEAL PLAN (Resetting to support Breakfast/Lunch/Dinner) ---
-    // We check if the table has the old schema (date as PK) and drop it to recreate with 'slot' support
-    // This is a simple migration strategy for this dev app.
-    db.get("PRAGMA table_info(meal_plan)", (err, rows) => {
-        // If we don't see the 'slot' column, we recreate the table
-        const hasSlot = rows && rows.some && rows.some(r => r.name === 'slot');
-        if (!hasSlot) {
-            db.run("DROP TABLE IF EXISTS meal_plan"); 
-            db.run(`CREATE TABLE meal_plan (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                date TEXT, 
-                slot TEXT, 
-                meal_id INTEGER, 
-                who TEXT,
-                UNIQUE(date, slot)
-            )`);
+    // --- MEAL PLANNER ---
+    db.run(`CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, tags TEXT, type TEXT)`);
+    db.run("ALTER TABLE meals ADD COLUMN type TEXT", (err) => {
+        if (err && !err.message.includes("duplicate column name")) {
+            console.error("Error migrating meals table:", err.message);
         }
     });
+
+    db.run(`CREATE TABLE IF NOT EXISTS meal_plan (date TEXT PRIMARY KEY, meal_id INTEGER)`);
 });
 
 // --- DATA ENDPOINTS ---
@@ -93,9 +84,9 @@ app.get('/api/meals', (req, res) => {
 });
 
 app.post('/api/meals', (req, res) => {
-    const { name, description, tags } = req.body;
-    db.run("INSERT INTO meals (name, description, tags) VALUES (?, ?, ?)", 
-        [name, description, JSON.stringify(tags || [])], 
+    const { name, description, tags, type } = req.body;
+    db.run("INSERT INTO meals (name, description, tags, type) VALUES (?, ?, ?, ?)", 
+        [name, description, JSON.stringify(tags || []), type], 
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ id: this.lastID, success: true });
@@ -104,9 +95,9 @@ app.post('/api/meals', (req, res) => {
 });
 
 app.put('/api/meals/:id', (req, res) => {
-    const { name, description, tags } = req.body;
-    db.run("UPDATE meals SET name = ?, description = ?, tags = ? WHERE id = ?", 
-        [name, description, JSON.stringify(tags || []), req.params.id], 
+    const { name, description, tags, type } = req.body;
+    db.run("UPDATE meals SET name = ?, description = ?, tags = ?, type = ? WHERE id = ?", 
+        [name, description, JSON.stringify(tags || []), type, req.params.id], 
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });
@@ -124,34 +115,29 @@ app.delete('/api/meals/:id', (req, res) => {
 
 app.get('/api/meal-plan', (req, res) => {
     const { start, end } = req.query;
-    // Updated query to include 'id' and 'slot'
     const sql = `
-        SELECT p.id, p.date, p.slot, p.meal_id, p.who, m.name, m.description, m.tags 
+        SELECT p.date, p.meal_id, m.name, m.description, m.tags, m.type
         FROM meal_plan p 
         LEFT JOIN meals m ON p.meal_id = m.id 
         WHERE p.date BETWEEN ? AND ?
     `;
     db.all(sql, [start, end], (err, rows) => {
-        const plan = rows ? rows.map(r => ({ 
-            ...r, 
-            tags: JSON.parse(r.tags || '[]'),
-            who: JSON.parse(r.who || '[]')
-        })) : [];
+        const plan = rows ? rows.map(r => ({ ...r, tags: JSON.parse(r.tags || '[]') })) : [];
         res.json(plan);
     });
 });
 
 app.post('/api/meal-plan', (req, res) => {
-    const { date, slot, meal_id, who } = req.body;
-    // Upsert based on date AND slot
-    db.run("INSERT INTO meal_plan (date, slot, meal_id, who) VALUES (?, ?, ?, ?) ON CONFLICT(date, slot) DO UPDATE SET meal_id=excluded.meal_id, who=excluded.who", 
-        [date, slot, meal_id, JSON.stringify(who || [])], 
+    const { date, meal_id } = req.body;
+    db.run("INSERT INTO meal_plan (date, meal_id) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET meal_id=excluded.meal_id", 
+        [date, meal_id], 
         () => res.json({ success: true })
     );
 });
 
-app.delete('/api/meal-plan/:id', (req, res) => {
-    db.run("DELETE FROM meal_plan WHERE id = ?", [req.params.id], () => res.json({ success: true }));
+app.delete('/api/meal-plan', (req, res) => {
+    const { date } = req.query;
+    db.run("DELETE FROM meal_plan WHERE date = ?", [date], () => res.json({ success: true }));
 });
 
 // --- CREDIT CARDS ENDPOINTS ---
@@ -217,6 +203,299 @@ app.post('/api/credit-cards/:id/pay', (req, res) => {
         }
     });
     res.json({ success: true });
+});
+
+// ==========================================
+// AI / OLLAMA ENDPOINTS
+// ==========================================
+
+app.get('/api/ai/models', (req, res) => {
+    db.get("SELECT value FROM settings WHERE key = 'ollama_url'", async (err, row) => {
+        if (err || !row) return res.status(500).json({ error: "Ollama URL not configured" });
+        
+        const url = row.value;
+        try {
+            const response = await fetch(`${url}/api/tags`);
+            if (!response.ok) throw new Error("Failed to connect to Ollama");
+            const data = await response.json();
+            res.json(data.models || []);
+        } catch (e) {
+            console.error("AI Model fetch error:", e.message);
+            res.status(500).json({ error: e.message });
+        }
+    });
+});
+
+app.post('/api/ai/generate', async (req, res) => {
+    const { type, params } = req.body;
+    const requestType = type || 'budget'; 
+    const month = params?.month;
+    const year = params?.year || (new Date()).getFullYear();
+
+    // Fetch necessary settings and custom prompts
+    const keysToFetch = [
+        'ollama_url', 'ollama_model', 'default_salary',
+        'prompt_budget', 'prompt_savings', 'prompt_credit_cards', 'prompt_dashboard',
+        'prompt_meals', 'prompt_birthdays', 'prompt_christmas', 'prompt_sandbox', 'prompt_mortgage'
+    ];
+    
+    const placeholders = keysToFetch.map(() => '?').join(',');
+    db.all(`SELECT key, value FROM settings WHERE key IN (${placeholders})`, keysToFetch, (err, rows) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        
+        const settings = {};
+        rows.forEach(r => settings[r.key] = r.value);
+        
+        const OLLAMA_URL = settings.ollama_url;
+        const MODEL = settings.ollama_model || 'llama3';
+
+        if (!OLLAMA_URL) return res.json({ success: false, error: "Ollama URL not configured in Settings." });
+
+        const formatPrompt = (template, data) => {
+            return template.replace(/\{\{(\w+)\}\}/g, (_, key) => data[key] || `[${key}]`);
+        };
+
+        const callOllama = async (promptText) => {
+            try {
+                const finalPrompt = promptText.includes("British Pounds") ? promptText : promptText + "\n\nKeep the tone helpful and objective. Use British Pounds (£).";
+                
+                const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: MODEL,
+                        prompt: finalPrompt,
+                        stream: false
+                    })
+                });
+
+                if (!response.ok) throw new Error(`Ollama responded with ${response.status}`);
+                const data = await response.json();
+                res.json({ success: true, response: data.response });
+            } catch (aiError) {
+                console.error("Ollama Error:", aiError);
+                res.json({ success: false, error: "Failed to connect to Ollama. " + aiError.message });
+            }
+        };
+
+        // --- HANDLERS ---
+
+        if (requestType === 'budget') {
+             if (!month) return res.status(400).json({ error: "Month required for budget summary" });
+             db.get("SELECT amount as balance, salary FROM monthly_balances WHERE month = ?", [month], (err, balanceRow) => {
+                const income = balanceRow ? (balanceRow.salary || settings.default_salary || 0) : 0;
+                const currentBalance = balanceRow ? balanceRow.balance : 0;
+
+                db.all("SELECT name, amount, category, paid FROM expenses WHERE month = ?", [month], (err, expenses) => {
+                    if (err) return res.status(500).json({ error: "Error fetching expenses" });
+
+                    const totalExpenses = expenses.reduce((sum, ex) => sum + Math.abs(ex.amount), 0);
+                    const unpaid = expenses.filter(e => !e.paid);
+                    const categories = {};
+                    expenses.forEach(ex => {
+                        const cat = ex.category || 'Uncategorized';
+                        if (!categories[cat]) categories[cat] = 0;
+                        categories[cat] += Math.abs(ex.amount);
+                    });
+
+                    const unpaidText = unpaid.length > 0 
+                        ? unpaid.map(e => `- ${e.name}: £${Math.abs(e.amount).toFixed(2)}`).join('\n') 
+                        : "All bills paid!";
+                    
+                    const categoryText = Object.entries(categories)
+                        .sort(([,a], [,b]) => b - a)
+                        .map(([k,v]) => `- ${k}: £${v.toFixed(2)}`)
+                        .join('\n');
+
+                    const topExpenses = [...expenses].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 10)
+                        .map(e => `- ${e.name}: £${Math.abs(e.amount).toFixed(2)} (${e.category})`).join('\n');
+
+                    const template = settings.prompt_budget || `Act as a financial advisor. Analyze this budget for {{month}}.\n\n**Status:** Income: £{{income}}, Expenses: £{{expenses}}, Balance: £{{balance}}\n\n**UNPAID BILLS:**\n{{unpaid_text}}\n\n**Spending:**\n{{category_text}}\n\n**Largest:**\n{{top_expenses}}\n\nProvide a summary focusing on upcoming obligations and month outlook.`;
+
+                    const prompt = formatPrompt(template, {
+                        month,
+                        income: income,
+                        expenses: totalExpenses.toFixed(2),
+                        balance: currentBalance,
+                        unpaid_text: unpaidText,
+                        category_text: categoryText,
+                        top_expenses: topExpenses
+                    });
+                    
+                    callOllama(prompt);
+                });
+            });
+
+        } else if (requestType === 'savings') {
+            const query = `SELECT a.name as account_name, p.name as pot_name, p.amount FROM savings_accounts a LEFT JOIN savings_pots p ON a.id = p.account_id`;
+            db.all(query, (err, rows) => {
+                if(err) return res.status(500).json({ error: "DB Error" });
+                
+                let totalSaved = 0;
+                let text = "";
+                const accounts = {};
+
+                rows.forEach(r => {
+                    if (!accounts[r.account_name]) accounts[r.account_name] = [];
+                    if (r.pot_name) {
+                        accounts[r.account_name].push(`${r.pot_name}: £${r.amount}`);
+                        totalSaved += r.amount;
+                    }
+                });
+
+                for (const [acc, pots] of Object.entries(accounts)) {
+                    text += `### ${acc}\n` + (pots.length ? pots.join('\n') : "Empty") + "\n\n";
+                }
+
+                const template = settings.prompt_savings || `Act as a financial advisor. Analyze my savings.\n\n**Total Saved:** £{{total_saved}}\n\n**Breakdown:**\n{{breakdown}}\n\nProvide a summary of my savings distribution.`;
+
+                const prompt = formatPrompt(template, {
+                    total_saved: totalSaved.toFixed(2),
+                    breakdown: text
+                });
+                
+                callOllama(prompt);
+            });
+
+        } else if (requestType === 'credit_cards') {
+            db.all("SELECT * FROM credit_cards", (err, cards) => {
+                if(err) return res.status(500).json({ error: "DB Error" });
+                
+                let totalDebt = 0;
+                const cardText = cards.map(c => {
+                    totalDebt += (c.balance || 0);
+                    return `- ${c.name}: Balance £${c.balance || 0} (Limit: £${c.limit_amount}, Rate: ${c.interest_rate}%)`;
+                }).join('\n');
+
+                const template = settings.prompt_credit_cards || `Act as a debt advisor. Analyze my credit cards.\n\n**Total Debt:** £{{total_debt}}\n\n**Cards:**\n{{cards_text}}\n\nProvide a summary of my debt situation and outlook.`;
+
+                const prompt = formatPrompt(template, {
+                    total_debt: totalDebt.toFixed(2),
+                    cards_text: cardText
+                });
+
+                callOllama(prompt);
+            });
+
+        } else if (requestType === 'dashboard') {
+            const startYear = year;
+            const months = [];
+            for (let i = 0; i < 12; i++) {
+                const d = new Date(startYear, 3 + i, 1); 
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                months.push(`${y}-${m}`);
+            }
+            const placeholders = months.map(() => '?').join(',');
+
+            db.get(`SELECT sum(salary) as income FROM monthly_balances WHERE month IN (${placeholders})`, months, (err, incRow) => {
+                db.get(`SELECT ABS(sum(amount)) as expenses FROM expenses WHERE month IN (${placeholders})`, months, (err, expRow) => {
+                    const totalIncome = incRow ? incRow.income : 0;
+                    const totalExpenses = expRow ? expRow.expenses : 0;
+                    
+                    const template = settings.prompt_dashboard || `Act as a financial advisor. Review year-to-date for tax year starting {{year}}.\n\n**Total Income:** £{{income}}\n**Total Expenses:** £{{expenses}}\n\nIs the user living within their means? Provide a brief outlook.`;
+
+                    const prompt = formatPrompt(template, {
+                        year: startYear,
+                        income: totalIncome || 0,
+                        expenses: totalExpenses || 0
+                    });
+                    
+                    callOllama(prompt);
+                });
+            });
+
+        } else if (requestType === 'meals') {
+             // Fetch next 7 days of meals
+             const today = new Date().toISOString().slice(0, 10);
+             const nextWeek = new Date();
+             nextWeek.setDate(nextWeek.getDate() + 7);
+             const end = nextWeek.toISOString().slice(0, 10);
+
+             db.all(`
+                SELECT p.date, m.name, m.type 
+                FROM meal_plan p 
+                LEFT JOIN meals m ON p.meal_id = m.id 
+                WHERE p.date BETWEEN ? AND ? 
+                ORDER BY p.date ASC`, [today, end], (err, rows) => {
+                
+                const mealsList = (rows || []).map(r => `${r.date}: ${r.name} (${r.type || 'Dinner'})`).join('\n');
+                const template = settings.prompt_meals || `Act as a nutritionist and budget planner. Review the meal plan for the next 7 days.\n\n**Meals:**\n{{meals_list}}\n\nProvide a summary of the nutritional balance and any suggestions for cost-effective ingredients.`;
+                
+                const prompt = formatPrompt(template, { meals_list: mealsList || 'No meals planned.' });
+                callOllama(prompt);
+             });
+
+        } else if (requestType === 'birthdays') {
+            db.all("SELECT * FROM birthdays ORDER BY date ASC", (err, rows) => {
+                const today = new Date();
+                // Simple logic to find next 5 birthdays
+                const upcoming = (rows || []).map(p => {
+                    const dob = new Date(p.date);
+                    // Mock 'next birthday' logic roughly
+                    const age = today.getFullYear() - dob.getFullYear();
+                    return `- ${p.name} (${p.type}): ${dob.getDate()}/${dob.getMonth()+1}`; 
+                }).slice(0, 5).join('\n');
+
+                const template = settings.prompt_birthdays || `Act as a personal assistant. Review upcoming birthdays.\n\n**Upcoming:**\n{{upcoming_list}}\n\nSuggest gift ideas or reminder timelines for these people.`;
+                
+                const prompt = formatPrompt(template, { upcoming_list: upcoming || 'None soon.' });
+                callOllama(prompt);
+            });
+
+        } else if (requestType === 'christmas') {
+            db.all("SELECT * FROM christmas_list", (err, rows) => {
+                const total = rows.reduce((acc, r) => acc + (r.amount || 0), 0);
+                const spent = rows.filter(r => r.bought).reduce((acc, r) => acc + (r.amount || 0), 0);
+                const remaining = rows.filter(r => !r.bought).length;
+                
+                const itemsList = rows.map(r => `- ${r.recipient}: ${r.item} (£${r.amount}) [${r.bought ? 'BOUGHT' : 'TO BUY'}]`).join('\n');
+
+                const template = settings.prompt_christmas || `Act as a holiday planner. Analyze my Christmas shopping list.\n\n**Status:** Spent £{{spent}} of £{{total}} ({{remaining_count}} items left).\n\n**Items:**\n{{items_list}}\n\nProvide a summary of progress and budgeting advice.`;
+
+                const prompt = formatPrompt(template, {
+                    spent, total, remaining_count: remaining, items_list: itemsList
+                });
+                callOllama(prompt);
+            });
+
+        } else if (requestType === 'sandbox') {
+             db.all("SELECT * FROM sandbox_expenses", (err, rows) => {
+                 db.get("SELECT value FROM settings WHERE key = 'default_salary'", (err, row) => {
+                     const salary = row ? row.value : 0;
+                     const total = rows.reduce((acc, r) => acc + (r.amount || 0), 0);
+                     const balance = salary - total;
+                     const list = rows.map(r => `- ${r.name}: £${r.amount}`).join('\n');
+
+                     const template = settings.prompt_sandbox || `Act as a financial analyst. Review this hypothetical budget scenario.\n\n**Income:** £{{salary}}\n**Expenses:** £{{total_expenses}}\n**Balance:** £{{balance}}\n\n**Expenses:**\n{{expense_list}}\n\nProvide feedback on the feasibility of this scenario.`;
+                     
+                     const prompt = formatPrompt(template, {
+                        salary, total_expenses: total, balance, expense_list: list
+                     });
+                     callOllama(prompt);
+                 });
+             });
+
+        } else if (requestType === 'mortgage') {
+             db.get("SELECT value FROM settings WHERE key = 'mortgage_data'", (err, row) => {
+                const data = row ? JSON.parse(row.value) : { soldPrice: 0, mortgages: [] };
+                const equity = data.soldPrice - (data.mortgages || []).reduce((acc, m) => acc + m.balance, 0);
+                const list = (data.mortgages || []).map(m => `- ${m.name}: £${m.balance} @ ${m.rate}%`).join('\n');
+
+                const template = settings.prompt_mortgage || `Act as a mortgage advisor. Review my current mortgage details.\n\n**Property Value:** £{{value}}\n**Mortgages:**\n{{mortgage_list}}\n\n**Equity:** £{{equity}}\n\nProvide an analysis of the LTV and potential overpayment benefits.`;
+
+                const prompt = formatPrompt(template, {
+                    value: data.soldPrice, mortgage_list: list, equity
+                });
+                callOllama(prompt);
+             });
+
+        } else {
+            const prompt = `The user is currently looking at the "${requestType}" page of their finance app. ` +
+                `Just provide a friendly, generic financial tip regarding "${requestType}".`;
+            callOllama(prompt);
+        }
+    });
 });
 
 // --- ADMIN ENDPOINTS ---
@@ -305,12 +584,16 @@ app.delete('/api/templates/:id', (req, res) => db.run("DELETE FROM expense_templ
 
 // --- EXPENSES ---
 app.post('/api/expenses', (req, res) => { const { name, amount, category, who, month } = req.body; db.run("INSERT INTO expenses (name, amount, category, who, month, paid) VALUES (?, ?, ?, ?, ?, 0)", [name, amount, category, who, month], function() { res.json({ id: this.lastID }); });});
+
+// Toggle Paid Status & Timestamp
 app.post('/api/expenses/:id/toggle', (req, res) => { 
     const { paid } = req.body;
     const paidAt = paid ? new Date().toISOString() : null; 
     db.run("UPDATE expenses SET paid = ?, paid_at = ? WHERE id = ?", [paid ? 1 : 0, paidAt, req.params.id], () => res.json({ success: true }));
 });
+
 app.put('/api/expenses/:id', (req, res) => { const { name, amount, category, who } = req.body; db.run("UPDATE expenses SET name = ?, amount = ?, category = ?, who = ? WHERE id = ?", [name, amount, category, who, req.params.id], () => res.json({ success: true }));});
+
 app.delete('/api/expenses/:id', (req, res) => db.run("DELETE FROM expenses WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
 // --- MONTH MGMT ---
@@ -349,6 +632,7 @@ app.post('/api/mortgage', (req, res) => {
 app.get('/api/dashboard', (req, res) => {
     const startYear = parseInt(req.query.year);
     if (!startYear) return res.status(400).json({ error: "Year required" });
+
     const months = [];
     for (let i = 0; i < 12; i++) {
         const d = new Date(startYear, 3 + i, 1); 
@@ -357,23 +641,61 @@ app.get('/api/dashboard', (req, res) => {
         months.push(`${y}-${m}`);
     }
     const placeholders = months.map(() => '?').join(',');
-    const response = { totalIncome: 0, totalExpenses: 0, categoryBreakdown: [], monthlyTrend: [], categoryTrend: [], whoBreakdown: [], biggestExpenses: [] };
+    
+    const response = {
+        totalIncome: 0, totalExpenses: 0, categoryBreakdown: [], monthlyTrend: [], categoryTrend: [],
+        whoBreakdown: [], biggestExpenses: [] 
+    };
 
+    // 1. Income (Sum)
     db.get(`SELECT sum(salary) as total FROM monthly_balances WHERE month IN (${placeholders})`, months, (err, row) => {
         response.totalIncome = row ? row.total : 0;
+
+        // 2. Category Breakdown (ABS Sum)
         db.all(`SELECT category, ABS(sum(amount)) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY category`, months, (err, rows) => {
             response.categoryBreakdown = rows || [];
             response.totalExpenses = response.categoryBreakdown.reduce((sum, item) => sum + item.total, 0);
-            const sqlTrend = `SELECT e.month, ABS(SUM(e.amount)) as expense_total, (SELECT salary FROM monthly_balances WHERE month = e.month) as income_val FROM expenses e WHERE e.month IN (${placeholders}) GROUP BY e.month ORDER BY e.month ASC`;
+
+            // 3. Monthly Trend (ABS Sum for Expenses)
+            const sqlTrend = `
+                SELECT 
+                    e.month, 
+                    ABS(SUM(e.amount)) as expense_total, 
+                    (SELECT salary FROM monthly_balances WHERE month = e.month) as income_val 
+                FROM expenses e 
+                WHERE e.month IN (${placeholders}) 
+                GROUP BY e.month 
+                ORDER BY e.month ASC
+            `;
+            
             db.all(sqlTrend, months, (err, rows) => {
                 response.monthlyTrend = rows || [];
-                const sqlCatTrend = `SELECT month, category, ABS(SUM(amount)) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY month, category ORDER BY month ASC`;
+
+                // 4. Category Trend (ABS Sum)
+                const sqlCatTrend = `
+                    SELECT month, category, ABS(SUM(amount)) as total 
+                    FROM expenses 
+                    WHERE month IN (${placeholders}) 
+                    GROUP BY month, category 
+                    ORDER BY month ASC
+                `;
+                
                 db.all(sqlCatTrend, months, (err, catRows) => {
                     response.categoryTrend = catRows || [];
+
+                    // 5. Who Spent What (ABS Sum)
                     const sqlWho = `SELECT who, ABS(SUM(amount)) as total FROM expenses WHERE month IN (${placeholders}) GROUP BY who ORDER BY total DESC`;
                     db.all(sqlWho, months, (err, whoRows) => {
                         response.whoBreakdown = whoRows || [];
-                        const sqlBig = `SELECT name, ABS(amount) as amount, month, category FROM expenses WHERE month IN (${placeholders}) ORDER BY ABS(amount) DESC LIMIT 5`;
+
+                        // 6. Biggest Expenses (ABS Amount & Sort)
+                        const sqlBig = `
+                            SELECT name, ABS(amount) as amount, month, category 
+                            FROM expenses 
+                            WHERE month IN (${placeholders}) 
+                            ORDER BY ABS(amount) DESC 
+                            LIMIT 5
+                        `;
                         db.all(sqlBig, months, (err, bigRows) => {
                             response.biggestExpenses = bigRows || [];
                             res.json(response);
@@ -385,7 +707,7 @@ app.get('/api/dashboard', (req, res) => {
     });
 });
 
-// --- SAVINGS, SANDBOX, CHRISTMAS (Existing) ---
+// --- SAVINGS ---
 app.get('/api/savings/structure', (req, res) => {
     const query = `SELECT a.id as account_id, a.name as account_name, p.id as pot_id, p.name as pot_name, p.amount as pot_amount FROM savings_accounts a LEFT JOIN savings_pots p ON a.id = p.account_id`;
     db.all(query, (err, rows) => {
@@ -408,6 +730,8 @@ app.delete('/api/savings/accounts/:id', (req, res) => { db.serialize(() => { db.
 app.post('/api/savings/pots', (req, res) => { const { accountId, name, amount } = req.body; db.run("INSERT INTO savings_pots (account_id, name, amount) VALUES (?, ?, ?)", [accountId, name, amount || 0], function() { res.json({ id: this.lastID }); });});
 app.put('/api/savings/pots/:id', (req, res) => { const { name, amount } = req.body; db.run("UPDATE savings_pots SET name = ?, amount = ? WHERE id = ?", [name, amount, req.params.id], () => res.json({ success: true }));});
 app.delete('/api/savings/pots/:id', (req, res) => { db.run("DELETE FROM savings_pots WHERE id = ?", [req.params.id], () => res.json({ success: true }));});
+
+// --- SANDBOX & CHRISTMAS ---
 app.get('/api/sandbox', (req, res) => db.all("SELECT * FROM sandbox_expenses", (err, rows) => res.json(rows || [])));
 app.post('/api/sandbox', (req, res) => { const { name, amount, category, who } = req.body; db.run("INSERT INTO sandbox_expenses (name, amount, category, who, paid) VALUES (?, ?, ?, ?, 0)", [name, amount, category, who], function() { res.json({ id: this.lastID }); });});
 app.put('/api/sandbox/:id', (req, res) => { const { name, amount, category, who } = req.body; db.run("UPDATE sandbox_expenses SET name=?, amount=?, category=?, who=? WHERE id=?", [name, amount, category, who, req.params.id], () => res.json({ success: true }));});
@@ -435,6 +759,7 @@ app.post('/api/sandbox/profiles/:id/load', (req, res) => {
         });
     });
 });
+
 app.get('/api/christmas', (req, res) => db.all("SELECT * FROM christmas_list", (err, rows) => res.json(rows || [])));
 app.post('/api/christmas', (req, res) => { const { recipient, item, amount } = req.body; db.run("INSERT INTO christmas_list (recipient, item, amount, bought) VALUES (?, ?, ?, 0)", [recipient, item, amount], function() { res.json({ id: this.lastID }); });});
 app.put('/api/christmas/:id', (req, res) => { const { recipient, item, amount } = req.body; db.run("UPDATE christmas_list SET recipient=?, item=?, amount=? WHERE id=?", [recipient, item, amount, req.params.id], () => res.json({ success: true }));});

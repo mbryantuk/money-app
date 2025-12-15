@@ -1,80 +1,97 @@
 <script setup>
     import { ref, computed } from 'vue';
     import axios from 'axios';
-    import draggable from 'vuedraggable';
     
     const props = defineProps({ 
-        people: Array, // Budget accounts
-        family: Array, // Meal planning people
+        people: Array, 
+        family: Array,
         categories: Array, 
         defaultSalary: Number, 
-        payDay: Number, 
-        templates: Array 
+        payDay: Number,
+        ollamaUrl: String,
+        ollamaModel: String,
+        prompts: { type: Object, default: () => ({}) }
     });
     
-    const emit = defineEmits(['notify', 'refresh', 'update:people', 'update:family', 'update:categories', 'update:default-salary', 'update:pay-day']);
+    const emit = defineEmits([
+        'notify', 'refresh', 
+        'update:people', 'update:family', 'update:categories', 
+        'update:default-salary', 'update:pay-day',
+        'update:ollama-url', 'update:ollama-model'
+    ]);
+    
     const API_URL = '/api';
     
-    // --- Local State for Renaming/Templates ---
+    // --- Local State ---
     const renameForm = ref({ type: 'people', oldName: null, newName: '' });
-    const newTemplate = ref({});
-    const editingId = ref(null);
-    const editForm = ref({});
-    const search = ref('');
+    const availableModels = ref([]);
+    const loadingModels = ref(false);
     
-    // --- Computed Proxies for Lists (Fixes mutation/saving issues) ---
-    // These computed properties handle the v-model binding correctly.
-    // When the list changes (item added/removed), it emits the update AND saves to DB.
-    
+    // Tabs for AI Prompts
+    const promptTab = ref('budget');
+
+    // Local copies of prompts for editing
+    const localPrompts = ref({ ...props.prompts });
+
+    // --- Computed Proxies for Lists ---
     const peopleList = computed({
         get: () => props.people || [],
-        set: (val) => {
-            emit('update:people', val);
-            saveSetting('people', val);
-        }
+        set: (val) => { emit('update:people', val); saveSetting('people', val); }
     });
 
     const familyList = computed({
         get: () => props.family || [],
-        set: (val) => {
-            emit('update:family', val);
-            saveSetting('family_members', val);
-        }
+        set: (val) => { emit('update:family', val); saveSetting('family_members', val); }
     });
 
     const categoryList = computed({
         get: () => props.categories || [],
-        set: (val) => {
-            emit('update:categories', val);
-            saveSetting('categories', val);
-        }
+        set: (val) => { emit('update:categories', val); saveSetting('categories', val); }
     });
-
-    // Dynamic Columns for Templates Table
-    const columns = ref([
-        { key: 'name', label: 'Name', align: 'left', width: '', sortable: true },
-        { key: 'amount', label: 'Amount', align: 'left', width: '120px', sortable: true },
-        { key: 'who', label: 'Who', align: 'left', width: '120px', sortable: true },
-        { key: 'category', label: 'Category', align: 'left', width: '140px', sortable: true },
-        { key: 'actions', label: '', align: 'end', width: '80px', sortable: false }
-    ]);
-    const sortKey = ref('name');
-    const sortOrder = ref(1);
     
     // --- API Actions ---
     const saveSetting = async (key, val) => { 
-        await axios.post(`${API_URL}/settings`, { key, value: JSON.stringify(val) }); 
+        await axios.post(`${API_URL}/settings`, { key, value: typeof val === 'object' ? JSON.stringify(val) : val }); 
         emit('notify', 'Saved'); 
     };
     
-    const saveSalary = async () => { 
-        await axios.post(`${API_URL}/settings`, { key: 'default_salary', value: props.defaultSalary }); 
-        emit('notify', 'Salary Saved'); 
+    const saveSalary = async () => { saveSetting('default_salary', props.defaultSalary); };
+    const savePayDay = async () => { saveSetting('pay_day', props.payDay); };
+    const saveOllamaUrl = async (val) => { saveSetting('ollama_url', val); };
+    const saveOllamaModel = async (val) => { saveSetting('ollama_model', val); };
+
+    // New: Save Prompt
+    const savePrompt = (key) => {
+        saveSetting(`prompt_${key}`, localPrompts.value[key]);
     };
-    
-    const savePayDay = async () => { 
-        await axios.post(`${API_URL}/settings`, { key: 'pay_day', value: props.payDay }); 
-        emit('notify', 'Pay Day Saved'); 
+
+    const fetchModels = async () => {
+        if (!props.ollamaUrl) return emit('notify', 'Please set Ollama URL first', 'error');
+        loadingModels.value = true;
+        try {
+            const res = await axios.get(`${API_URL}/ai/models`);
+            if (Array.isArray(res.data)) {
+                availableModels.value = res.data.map(m => m.name);
+                const preferred = ['llama3', 'mistral', 'gemma:7b', 'llama2', 'qwen'];
+                const bestMatch = preferred.find(p => availableModels.value.some(m => m.includes(p)));
+                if (bestMatch) {
+                    const exactModel = availableModels.value.find(m => m.includes(bestMatch));
+                    if (exactModel) {
+                        emit('update:ollama-model', exactModel);
+                        saveOllamaModel(exactModel);
+                        emit('notify', `Found & selected: ${exactModel}`);
+                    }
+                } else if (availableModels.value.length > 0) {
+                    emit('update:ollama-model', availableModels.value[0]);
+                    saveOllamaModel(availableModels.value[0]);
+                    emit('notify', `Selected: ${availableModels.value[0]}`);
+                }
+            }
+        } catch (e) {
+            emit('notify', 'Failed to fetch models. Check URL.', 'error');
+        } finally {
+            loadingModels.value = false;
+        }
     };
     
     const performRename = async () => { 
@@ -84,115 +101,121 @@
             emit('notify', 'Renamed'); 
         } 
     };
-    
-    const addTemplate = async () => { 
-        if(!newTemplate.value.name) return; 
-        await axios.post(`${API_URL}/templates`, newTemplate.value); 
-        newTemplate.value = {}; 
-        emit('refresh'); 
-    };
-    
-    const saveTemplate = async () => { 
-        await axios.put(`${API_URL}/templates/${editForm.value.id}`, editForm.value); 
-        editingId.value = null; 
-        emit('refresh'); 
-    };
-    
-    const deleteTemplate = async (id) => { 
-        if(confirm("Delete?")) { 
-            await axios.delete(`${API_URL}/templates/${id}`); 
-            emit('refresh'); 
-        } 
-    };
-    
-    const startEdit = (t) => { editingId.value = t.id; editForm.value = {...t}; };
-    const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
-    
-    const filteredTemplates = computed(() => {
-        let items = props.templates || [];
-        if (search.value) items = items.filter(t => t.name.toLowerCase().includes(search.value.toLowerCase()));
-        return [...items].sort((a, b) => {
-            let vA = a[sortKey.value], vB = b[sortKey.value];
-            if (typeof vA === 'string') { vA = vA.toLowerCase(); vB = vB.toLowerCase(); }
-            return (vA < vB ? -1 : vA > vB ? 1 : 0) * sortOrder.value;
-        });
-    });
 </script>
     
 <template>
     <v-row>
-        <v-col cols="12" md="4">
+        <v-col cols="12" md="6">
             <v-card class="mb-4 pa-4 border-s-lg border-primary" elevation="3">
                 <h3 class="text-h6 mb-2">Global Rename</h3>
-                <v-radio-group v-model="renameForm.type" inline density="compact" hide-details>
+                <div class="text-caption text-grey mb-4">Rename a person or category across all history.</div>
+                <v-radio-group v-model="renameForm.type" inline density="compact" hide-details class="mb-2">
                     <v-radio label="Person" value="people"></v-radio><v-radio label="Category" value="categories"></v-radio>
                 </v-radio-group>
-                <v-select v-model="renameForm.oldName" :items="renameForm.type==='people'?people:categories" label="Find" density="compact" variant="outlined"></v-select>
-                <v-text-field v-model="renameForm.newName" label="Replace With" density="compact" variant="outlined"></v-text-field>
-                <v-btn block color="primary" @click="performRename">Rename</v-btn>
+                <v-select v-model="renameForm.oldName" :items="renameForm.type==='people'?people:categories" label="Find Old Name" density="compact" variant="outlined"></v-select>
+                <v-text-field v-model="renameForm.newName" label="Replace With New Name" density="compact" variant="outlined"></v-text-field>
+                <v-btn block color="primary" @click="performRename">Execute Rename</v-btn>
             </v-card>
+
+            <v-card class="mb-4 border-s-lg border-secondary" elevation="3">
+                <div class="pa-4">
+                    <div class="d-flex align-center mb-2">
+                        <v-icon color="secondary" class="mr-2">mdi-robot</v-icon>
+                        <h3 class="text-h6">AI Configuration</h3>
+                    </div>
+                    <div class="text-caption text-grey mb-4">Connect to a local Ollama instance.</div>
+                    
+                    <v-text-field 
+                        :model-value="props.ollamaUrl" 
+                        @update:model-value="(val) => emit('update:ollama-url', val)" 
+                        @change="(e) => saveOllamaUrl(e.target.value)"
+                        label="Ollama Server URL" 
+                        placeholder="http://localhost:11434" 
+                        variant="outlined" 
+                        density="compact"
+                        class="mb-2"
+                    ></v-text-field>
+
+                    <div class="d-flex mb-4">
+                        <v-combobox
+                            :model-value="props.ollamaModel" 
+                            :items="availableModels"
+                            @update:model-value="(val) => { emit('update:ollama-model', val); saveOllamaModel(val); }" 
+                            label="Model Name" 
+                            placeholder="e.g. llama3" 
+                            variant="outlined" 
+                            density="compact"
+                            hint="Click fetch to auto-detect best model"
+                            persistent-hint
+                            class="mr-2"
+                        ></v-combobox>
+
+                        <v-btn color="secondary" variant="tonal" height="40" :loading="loadingModels" @click="fetchModels">Fetch</v-btn>
+                    </div>
+                </div>
+
+                <v-divider></v-divider>
+
+                <div class="pa-0">
+                    <v-tabs v-model="promptTab" density="compact" bg-color="grey-lighten-4" color="secondary" show-arrows>
+                        <v-tab value="budget">Budget</v-tab>
+                        <v-tab value="savings">Savings</v-tab>
+                        <v-tab value="credit_cards">Credit</v-tab>
+                        <v-tab value="dashboard">Dash</v-tab>
+                        <v-tab value="meals">Meals</v-tab>
+                        <v-tab value="birthdays">Birthdays</v-tab>
+                        <v-tab value="christmas">Xmas</v-tab>
+                        <v-tab value="sandbox">Sandbox</v-tab>
+                        <v-tab value="mortgage">Mortgage</v-tab>
+                    </v-tabs>
+                    <v-window v-model="promptTab">
+                        <v-window-item v-for="key in ['budget', 'savings', 'credit_cards', 'dashboard', 'meals', 'birthdays', 'christmas', 'sandbox', 'mortgage']" :key="key" :value="key">
+                            <div class="pa-4">
+                                <v-textarea 
+                                    v-model="localPrompts[key]" 
+                                    label="Custom Prompt Template" 
+                                    variant="outlined" 
+                                    rows="6" 
+                                    auto-grow
+                                    class="mb-2 font-monospace"
+                                ></v-textarea>
+                                <div class="d-flex justify-space-between align-center">
+                                    <div class="text-caption text-grey">
+                                        <span v-if="key==='budget'" v-text="'Vars: {{month}} {{income}} {{expenses}} {{balance}} {{unpaid_text}}'"></span>
+                                        <span v-if="key==='savings'" v-text="'Vars: {{total_saved}} {{breakdown}}'"></span>
+                                        <span v-if="key==='dashboard'" v-text="'Vars: {{year}} {{income}} {{expenses}}'"></span>
+                                        <span v-if="key==='credit_cards'" v-text="'Vars: {{total_debt}} {{cards_text}}'"></span>
+                                        <span v-if="key==='meals'" v-text="'Vars: {{meals_list}}'"></span>
+                                        <span v-if="key==='birthdays'" v-text="'Vars: {{upcoming_list}}'"></span>
+                                        <span v-if="key==='christmas'" v-text="'Vars: {{spent}} {{total}} {{remaining_count}} {{items_list}}'"></span>
+                                        <span v-if="key==='sandbox'" v-text="'Vars: {{salary}} {{total_expenses}} {{balance}} {{expense_list}}'"></span>
+                                        <span v-if="key==='mortgage'" v-text="'Vars: {{value}} {{equity}} {{mortgage_list}}'"></span>
+                                    </div>
+                                    <v-btn size="small" color="secondary" @click="savePrompt(key)">Save Prompt</v-btn>
+                                </div>
+                            </div>
+                        </v-window-item>
+                    </v-window>
+                </div>
+            </v-card>
+        </v-col>
+
+        <v-col cols="12" md="6">
             <v-card class="mb-4 pa-4">
                 <h3 class="text-h6 mb-2">Financial Defaults</h3>
                 <v-text-field :model-value="props.defaultSalary" @update:model-value="(val) => emit('update:default-salary', Number(val))" @change="saveSalary" label="Default Salary" prefix="£" variant="outlined" class="mb-2"></v-text-field>
                 <v-text-field :model-value="props.payDay" @update:model-value="(val) => emit('update:pay-day', Number(val))" @change="savePayDay" label="Pay Day (Date)" type="number" min="1" max="31" suffix="th" variant="outlined"></v-text-field>
             </v-card>
             <v-card class="pa-4">
-                <h3 class="text-h6 mb-2">Lists</h3>
-                <v-combobox v-model="peopleList" chips multiple label="Budget Accounts (Who Pay)"></v-combobox>
-                <v-combobox v-model="familyList" chips multiple label="Family Members (Who Eat)" class="mt-2"></v-combobox>
-                <v-combobox v-model="categoryList" chips multiple label="Categories" class="mt-2"></v-combobox>
-            </v-card>
-        </v-col>
-
-        <v-col cols="12" md="8">
-            <v-card title="Master Bill List">
-                <template #append><v-text-field v-model="search" density="compact" variant="plain" hide-details prepend-inner-icon="mdi-magnify" label="Search" style="width:150px"></v-text-field></template>
-                <v-table density="compact">
-                    <thead>
-                        <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
-                            <template #item="{ element: col }">
-                                <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header">
-                                    <div class="d-flex align-center" :class="{'justify-end': col.align==='end', 'justify-center': col.align==='center'}">
-                                        <v-icon size="small" class="drag-handle cursor-move mr-1">mdi-drag</v-icon>
-                                        <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
-                                            {{ col.label }}
-                                            <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
-                                        </span>
-                                    </div>
-                                </th>
-                            </template>
-                        </draggable>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td v-for="col in columns" :key="'new'+col.key">
-                                <div v-if="col.key === 'name'"><v-text-field v-model="newTemplate.name" density="compact" hide-details placeholder="Name"></v-text-field></div>
-                                <div v-else-if="col.key === 'amount'"><v-text-field v-model.number="newTemplate.amount" type="number" density="compact" hide-details placeholder="0.00"></v-text-field></div>
-                                <div v-else-if="col.key === 'who'"><v-select v-model="newTemplate.who" :items="people" density="compact" hide-details></v-select></div>
-                                <div v-else-if="col.key === 'category'"><v-select v-model="newTemplate.category" :items="categories" density="compact" hide-details></v-select></div>
-                                <div v-else-if="col.key === 'actions'"><v-btn size="small" color="primary" @click="addTemplate">Add</v-btn></div>
-                            </td>
-                        </tr>
-                        <tr v-for="t in filteredTemplates" :key="t.id">
-                            <td v-for="col in columns" :key="col.key">
-                                <div v-if="col.key === 'name'"><v-text-field v-if="editingId===t.id" v-model="editForm.name" density="compact" variant="outlined"></v-text-field><span v-else>{{t.name}}</span></div>
-                                <div v-else-if="col.key === 'amount'"><v-text-field v-if="editingId===t.id" v-model.number="editForm.amount" density="compact" variant="outlined"></v-text-field><span v-else>£{{t.amount}}</span></div>
-                                <div v-else-if="col.key === 'who'"><v-select v-if="editingId===t.id" v-model="editForm.who" :items="people" density="compact" variant="outlined"></v-select><span v-else>{{t.who}}</span></div>
-                                <div v-else-if="col.key === 'category'"><v-select v-if="editingId===t.id" v-model="editForm.category" :items="categories" density="compact" variant="outlined"></v-select><span v-else>{{t.category}}</span></div>
-                                <div v-else-if="col.key === 'actions'">
-                                    <div v-if="editingId===t.id"><v-btn icon="mdi-check" color="green" size="small" variant="text" @click="saveTemplate"></v-btn></div>
-                                    <div v-else><v-btn icon="mdi-pencil" color="grey" size="small" variant="text" @click="startEdit(t)"></v-btn><v-btn icon="mdi-delete" color="grey" size="small" variant="text" @click="deleteTemplate(t.id)"></v-btn></div>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </v-table>
+                <h3 class="text-h6 mb-2">Manage Lists</h3>
+                <v-combobox v-model="peopleList" chips multiple label="Budget Accounts (Who Pay)" variant="outlined" class="mb-2"></v-combobox>
+                <v-combobox v-model="familyList" chips multiple label="Family Members (Who Eat)" variant="outlined" class="mb-2"></v-combobox>
+                <v-combobox v-model="categoryList" chips multiple label="Categories" variant="outlined"></v-combobox>
             </v-card>
         </v-col>
     </v-row>
 </template>
-    
+
 <style scoped>
-.cursor-move { cursor: move; }
-.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
+.font-monospace { font-family: monospace; font-size: 0.9em; }
 </style>

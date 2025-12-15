@@ -33,13 +33,13 @@
     // Standardized Columns
     const columns = ref([
       { key: 'select', label: '', width: '40px', align: 'center', sortable: false },
-      { key: 'status', label: 'Paid', width: '60px', align: 'center', sortable: true },
+      { key: 'paid', label: 'Paid', width: '60px', align: 'center', sortable: true },
       { key: 'who', label: 'Who', width: '110px', align: 'left', sortable: true },
       { key: 'name', label: 'Bill Name', width: '', align: 'left', sortable: true },
       { key: 'amount', label: 'Amount', width: '120px', align: 'right', sortable: true },
-      { key: 'category', label: 'Category', width: '140px', align: 'left', sortable: false },
+      { key: 'category', label: 'Category', width: '140px', align: 'left', sortable: true },
     ]);
-    const sortKey = ref('paid');
+    const sortKey = ref('date'); // Default sort order inside categories
     const sortOrder = ref(1);
     const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing' });
     
@@ -104,18 +104,59 @@
         expenses.value.forEach(i => { if(!i.paid) g[i.who||'Joint'] = (g[i.who||'Joint'] || 0) + i.amount; });
         return g;
     });
+
+    // Helper: Sort function for items within a category
+    const sortItems = (items) => {
+        return [...items].sort((a, b) => {
+            let vA = a[sortKey.value];
+            let vB = b[sortKey.value];
+            
+            if (vA === null || vA === undefined) vA = '';
+            if (vB === null || vB === undefined) vB = '';
+
+            if (typeof vA === 'string') { vA = vA.toLowerCase(); }
+            if (typeof vB === 'string') { vB = vB.toLowerCase(); }
+            
+            if (vA < vB) return -1 * sortOrder.value;
+            if (vA > vB) return 1 * sortOrder.value;
+            return 0;
+        });
+    };
     
-    const filteredExpenses = computed(() => {
+    // GROUPED DATA STRUCTURE
+    const groupedExpenses = computed(() => {
         let items = expenses.value;
+        
+        // 1. Filter
         if (search.value) {
             const s = search.value.toLowerCase();
             items = items.filter(i => (i.name && i.name.toLowerCase().includes(s)) || (i.who && i.who.toLowerCase().includes(s)) || (i.category && i.category.toLowerCase().includes(s)));
         }
-        return [...items].sort((a, b) => {
-            let vA = a[sortKey.value], vB = b[sortKey.value];
-            if (typeof vA === 'string') { vA = vA.toLowerCase(); vB = vB.toLowerCase(); }
-            return (vA < vB ? -1 : vA > vB ? 1 : 0) * sortOrder.value;
-        });
+
+        // 2. Split Paid/Unpaid
+        const unpaidItems = items.filter(i => !i.paid);
+        const paidItems = items.filter(i => i.paid);
+
+        // 3. Group By Category Helper
+        const groupByCategory = (list) => {
+            const groups = {};
+            list.forEach(item => {
+                const cat = item.category || 'Other';
+                if (!groups[cat]) groups[cat] = [];
+                groups[cat].push(item);
+            });
+            // Sort categories alphabetically and return array
+            return Object.keys(groups).sort().map(cat => ({
+                name: cat,
+                items: sortItems(groups[cat]), // Sort items inside category
+                total: groups[cat].reduce((sum, i) => sum + Number(i.amount), 0)
+            }));
+        };
+
+        return {
+            unpaid: groupByCategory(unpaidItems),
+            paid: groupByCategory(paidItems)
+        };
     });
     
     // --- ACTIONS ---
@@ -296,29 +337,69 @@
                         </draggable>
                     </thead>
                     <tbody>
-                        <tr v-for="ex in filteredExpenses" :key="ex.id" :style="getRowStyle(ex)">
-                            <td v-for="col in columns" :key="col.key" :class="'text-'+col.align" class="pa-1">
-                                <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedExpenses" :value="ex.id" density="compact" hide-details class="ma-0"></v-checkbox-btn>
-                                <div v-else-if="col.key === 'status'" class="d-flex justify-center">
-                                    <v-tooltip v-if="ex.paid && ex.paid_at" location="top" :text="'Paid: ' + formatDateTime(ex.paid_at)">
-                                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-check-circle" color="green" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn></template>
-                                    </v-tooltip>
-                                    <v-btn v-else icon="mdi-circle-outline" color="grey" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn>
-                                </div>
-                                <div v-else-if="col.key === 'who'">
-                                    <v-select :model-value="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="v => updateCell(ex, 'who', v)"></v-select>
-                                </div>
-                                <div v-else-if="col.key === 'name'">
-                                    <v-text-field :model-value="ex.name" density="compact" variant="plain" hide-details single-line @update:model-value="v => updateCell(ex, 'name', v)"></v-text-field>
-                                </div>
-                                <div v-else-if="col.key === 'amount'">
-                                    <v-text-field :model-value="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @update:model-value="v => updateCell(ex, 'amount', Number(v))"></v-text-field>
-                                </div>
-                                <div v-else-if="col.key === 'category'">
-                                    <v-select :model-value="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="v => updateCell(ex, 'category', v)"></v-select>
-                                </div>
-                            </td>
-                        </tr>
+                        <template v-for="catGroup in groupedExpenses.unpaid" :key="'unpaid-'+catGroup.name">
+                            <tr :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'" class="font-weight-bold section-header">
+                                <td :colspan="columns.length" class="text-overline">
+                                   Unpaid • {{ catGroup.name }} 
+                                   <span class="float-right">£{{ catGroup.total.toFixed(2) }}</span>
+                                </td>
+                            </tr>
+                            <tr v-for="ex in catGroup.items" :key="ex.id" :style="getRowStyle(ex)">
+                                <td v-for="col in columns" :key="col.key" :class="'text-'+col.align" class="pa-1">
+                                    <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedExpenses" :value="ex.id" density="compact" hide-details class="ma-0"></v-checkbox-btn>
+                                    <div v-else-if="col.key === 'paid'" class="d-flex justify-center">
+                                        <v-tooltip v-if="ex.paid && ex.paid_at" location="top" :text="'Paid: ' + formatDateTime(ex.paid_at)">
+                                            <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-check-circle" color="green" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn></template>
+                                        </v-tooltip>
+                                        <v-btn v-else icon="mdi-circle-outline" color="grey" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn>
+                                    </div>
+                                    <div v-else-if="col.key === 'who'">
+                                        <v-select :model-value="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="v => updateCell(ex, 'who', v)"></v-select>
+                                    </div>
+                                    <div v-else-if="col.key === 'name'">
+                                        <v-text-field :model-value="ex.name" density="compact" variant="plain" hide-details single-line @update:model-value="v => updateCell(ex, 'name', v)"></v-text-field>
+                                    </div>
+                                    <div v-else-if="col.key === 'amount'">
+                                        <v-text-field :model-value="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @update:model-value="v => updateCell(ex, 'amount', Number(v))"></v-text-field>
+                                    </div>
+                                    <div v-else-if="col.key === 'category'">
+                                        <v-select :model-value="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="v => updateCell(ex, 'category', v)"></v-select>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+
+                        <template v-for="catGroup in groupedExpenses.paid" :key="'paid-'+catGroup.name">
+                            <tr :class="isDark ? 'bg-grey-darken-3' : 'bg-grey-lighten-4'" class="font-weight-bold section-header" style="opacity: 0.8">
+                                <td :colspan="columns.length" class="text-overline text-medium-emphasis">
+                                   Paid • {{ catGroup.name }}
+                                   <span class="float-right">£{{ catGroup.total.toFixed(2) }}</span>
+                                </td>
+                            </tr>
+                            <tr v-for="ex in catGroup.items" :key="ex.id" :style="getRowStyle(ex)">
+                                <td v-for="col in columns" :key="col.key" :class="'text-'+col.align" class="pa-1">
+                                    <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedExpenses" :value="ex.id" density="compact" hide-details class="ma-0"></v-checkbox-btn>
+                                    <div v-else-if="col.key === 'paid'" class="d-flex justify-center">
+                                        <v-tooltip v-if="ex.paid && ex.paid_at" location="top" :text="'Paid: ' + formatDateTime(ex.paid_at)">
+                                            <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-check-circle" color="green" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn></template>
+                                        </v-tooltip>
+                                        <v-btn v-else icon="mdi-circle-outline" color="grey" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn>
+                                    </div>
+                                    <div v-else-if="col.key === 'who'">
+                                        <v-select :model-value="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="v => updateCell(ex, 'who', v)"></v-select>
+                                    </div>
+                                    <div v-else-if="col.key === 'name'">
+                                        <v-text-field :model-value="ex.name" density="compact" variant="plain" hide-details single-line @update:model-value="v => updateCell(ex, 'name', v)"></v-text-field>
+                                    </div>
+                                    <div v-else-if="col.key === 'amount'">
+                                        <v-text-field :model-value="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @update:model-value="v => updateCell(ex, 'amount', Number(v))"></v-text-field>
+                                    </div>
+                                    <div v-else-if="col.key === 'category'">
+                                        <v-select :model-value="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="v => updateCell(ex, 'category', v)"></v-select>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
                     </tbody>
                 </v-table>
             </v-card>
@@ -336,7 +417,6 @@
 <style scoped>
 .sticky-header {
     position: sticky;
-    /* User reported 50px works best */
     top: 48px; 
     z-index: 1000;
     margin-top: -24px;
