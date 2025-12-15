@@ -2,15 +2,20 @@ const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./finance.db');
 
 db.serialize(() => {
-    // 1. Core Tables
-    db.run(`CREATE TABLE IF NOT EXISTS monthly_balances (month TEXT PRIMARY KEY, amount REAL DEFAULT 0, salary REAL DEFAULT 0)`);
+    // 1. Core Tables - Added notes column definition
+    db.run(`CREATE TABLE IF NOT EXISTS monthly_balances (month TEXT PRIMARY KEY, amount REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT)`);
     
     // 2. Migrations
     db.run("ALTER TABLE monthly_balances ADD COLUMN salary REAL DEFAULT 0", (err) => {
         if (err && !err.message.includes("duplicate column name")) console.error("Migration Error:", err.message);
     });
 
-    // --- NEW MIGRATION: Add paid_at column ---
+    // Migration for Notes
+    db.run("ALTER TABLE monthly_balances ADD COLUMN notes TEXT", (err) => {
+        if (err && !err.message.includes("duplicate column name")) console.error("Migration Error (notes):", err.message);
+    });
+
+    // Migration for paid_at
     db.run("ALTER TABLE expenses ADD COLUMN paid_at TEXT", (err) => {
         if (err && !err.message.includes("duplicate column name")) console.error("Migration Error (paid_at):", err.message);
     });

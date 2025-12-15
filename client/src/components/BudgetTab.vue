@@ -1,5 +1,5 @@
 <script setup>
-    import { ref, computed, watch, onMounted } from 'vue';
+    import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
     import axios from 'axios';
     import draggable from 'vuedraggable';
     import { useTheme } from 'vuetify';
@@ -10,7 +10,7 @@
       categories: Array,
       defaultSalary: Number,
       payDay: { type: Number, default: 19 },
-      birthdays: { type: Array, default: () => [] } // [!code ++]
+      birthdays: { type: Array, default: () => [] }
     });
     const emit = defineEmits(['update:month', 'notify']);
     const API_URL = '/api';
@@ -20,10 +20,12 @@
     // LOCAL STATE
     const balance = ref(0);
     const salary = ref(0);
+    const notes = ref('');
     const expenses = ref([]);
     const selectedExpenses = ref([]);
     const search = ref(''); 
-    
+    const isCompact = ref(false); // Controls the shrink header
+
     // UNDO / REDO STATE
     const history = ref([]);
     const future = ref([]);
@@ -41,7 +43,7 @@
     const sortOrder = ref(1);
     const newExpense = ref({ name: '', amount: '', who: 'Joint', category: 'Housing' });
     
-    // --- PAY DATE CALCULATION ---
+    // --- DATES ---
     const getPayDate = (year, month) => {
         let d = new Date(year, month, props.payDay); 
         const day = d.getDay(); 
@@ -66,35 +68,21 @@
             main: mainMonthName,
             range: `${startMonthName} ${startDayVal} - ${endMonthName} ${endDayVal - 1}`,
             days: diffDays,
-            start: startDate, // [!code ++]
-            end: endDate // [!code ++]
+            start: startDate,
+            end: endDate
         };
     });
     
-    // [!code ++] Birthdays in this financial period logic
     const upcomingBirthdays = computed(() => {
         if (!props.birthdays || !formattedMonth.value.start || !formattedMonth.value.end) return [];
-        
         const start = formattedMonth.value.start;
-        const end = formattedMonth.value.end; // This is technically the start of next pay period, so we usually check < end or <= end-1
-    
+        const end = formattedMonth.value.end;
         return props.birthdays.filter(person => {
             const dob = new Date(person.date);
-            
-            // We need to check if the birthday falls in the range for the current year(s)
-            // Since the range might cross a year boundary (Dec -> Jan)
-            
-            // Create a date object for this person's birthday in the Start Year
             let bdayThisYear = new Date(start.getFullYear(), dob.getMonth(), dob.getDate());
-            
-            // Check if it falls in range
             if (bdayThisYear >= start && bdayThisYear < end) return true;
-    
-            // If the range crosses year boundary (e.g. Dec 2023 - Jan 2024)
-            // We might need to check the birthday in the Next Year
             let bdayNextYear = new Date(end.getFullYear(), dob.getMonth(), dob.getDate());
             if (bdayNextYear >= start && bdayNextYear < end) return true;
-    
             return false;
         }).map(p => {
             const d = new Date(p.date);
@@ -110,7 +98,6 @@
     const paidExpenses = computed(() => expenses.value.filter(item => item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
     const leftToPay = computed(() => expenses.value.filter(item => !item.paid).reduce((acc, item) => acc + Number(item.amount), 0));
     const projectedBalance = computed(() => Number(balance.value) - Number(leftToPay.value));
-    const progressPercentage = computed(() => totalExpenses.value === 0 ? 0 : Math.round((Math.abs(paidExpenses.value) / Math.abs(totalExpenses.value)) * 100));
     const selectedTotal = computed(() => expenses.value.filter(item => selectedExpenses.value.includes(item.id)).reduce((sum, item) => sum + Number(item.amount), 0));
     const breakdownByWho = computed(() => {
         const g = {};
@@ -131,175 +118,64 @@
         });
     });
     
-    // --- UNDO / REDO LOGIC ---
-    const createSnapshot = () => {
-        return JSON.stringify({
-            balance: balance.value,
-            salary: salary.value,
-            expenses: expenses.value
-        });
-    };
-    
-    const saveToHistory = () => {
-        history.value.push(createSnapshot());
-        future.value = []; 
-        if (history.value.length > 20) history.value.shift();
-    };
-    
-    const performUndo = async () => {
-        if (!history.value.length) return;
-        const previous = JSON.parse(history.value.pop());
-        future.value.push(createSnapshot()); 
-        await applySnapshot(previous);
-        emit('notify', 'Undo successful');
-    };
-    
-    const performRedo = async () => {
-        if (!future.value.length) return;
-        const next = JSON.parse(future.value.pop());
-        history.value.push(createSnapshot()); 
-        await applySnapshot(next);
-        emit('notify', 'Redo successful');
-    };
-    
-    const applySnapshot = async (state) => {
-        balance.value = state.balance;
-        salary.value = state.salary;
-        expenses.value = state.expenses;
-        try {
-            await axios.post(`${API_URL}/month/sync`, {
-                month: props.month,
-                balance: state.balance,
-                salary: state.salary,
-                expenses: state.expenses
-            });
-        } catch (e) {
-            console.error("Sync failed", e);
-            emit('notify', 'Error syncing undo', 'error');
-        }
-    };
-    
-    // ACTIONS
+    // --- ACTIONS ---
     const fetchData = async () => {
-        // Add timestamp to bust browser cache
         const res = await axios.get(`${API_URL}/data`, { params: { month: props.month, _t: Date.now() } });
-        
         balance.value = parseFloat(res.data.balance) || 0;
         salary.value = parseFloat(res.data.salary) || props.defaultSalary;
+        notes.value = res.data.notes || '';
         expenses.value = (res.data.expenses || []).map(e => ({...e, amount: Math.abs(parseFloat(e.amount))}));
         selectedExpenses.value = [];
-        history.value = [];
-        future.value = [];
+        history.value = []; future.value = [];
     };
     
-    const updateBalance = async () => { 
-        saveToHistory();
-        await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) }); 
-        emit('notify', 'Balance Saved'); 
-    };
-    const updateSalary = async () => { 
-        saveToHistory();
-        await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) }); 
-        emit('notify', 'Salary Logged'); 
-    };
-    
-    const changeMonth = (offset) => {
-        const [y, m] = props.month.split('-').map(Number);
-        const d = new Date(y, m - 1 + offset, 1);
-        emit('update:month', `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
-    };
-    
-    const initMonth = async (source) => {
-        if(!confirm("Initialize month?")) return;
-        saveToHistory();
-        const [y, m] = props.month.split('-').map(Number);
-        const pd = new Date(y, m - 2, 1);
-        await axios.post(`${API_URL}/month/init`, { month: props.month, source, previousMonth: `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}` });
-        fetchData();
-    };
-    
-    const resetMonth = async () => { 
-        if(!confirm("Delete ALL data?")) return;
-        saveToHistory();
-        await axios.delete(`${API_URL}/month`, { params: { month: props.month } }); 
-        fetchData(); 
-    };
-    
-    const addExpense = async () => {
-        if(!newExpense.value.name || !newExpense.value.amount) return;
-        saveToHistory();
-        await axios.post(`${API_URL}/expenses`, { ...newExpense.value, month: props.month, amount: Math.abs(parseFloat(newExpense.value.amount)) });
-        newExpense.value.name = ''; newExpense.value.amount = ''; 
-        fetchData();
-    };
-    
-    const togglePaid = async (item) => {
-        saveToHistory();
-        item.paid = !item.paid;
-        item.paid_at = item.paid ? new Date().toISOString() : null;
-        await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid });
-    };
-    
-    const updateItem = async (item) => {
-        try {
-            await axios.put(`${API_URL}/expenses/${item.id}`, item);
-        } catch (e) {
-            emit('notify', 'Error saving item', 'error');
-        }
-    };
-    
-    const updateCell = async (item, key, value) => {
-        if (item[key] === value) return; 
-        saveToHistory();
-        item[key] = value; 
-        try {
-            await axios.put(`${API_URL}/expenses/${item.id}`, item);
-        } catch (e) {
-            emit('notify', 'Error saving item', 'error');
-        }
-    };
-    
-    const deleteSelected = async () => {
-        if(!selectedExpenses.value.length) return;
-        if(!confirm(`Delete ${selectedExpenses.value.length} items?`)) return;
-        saveToHistory();
-        try {
-            await Promise.all(selectedExpenses.value.map(id => axios.delete(`${API_URL}/expenses/${id}`)));
-            selectedExpenses.value = []; fetchData(); emit('notify', 'Items deleted');
-        } catch (e) { console.error(e); }
-    };
-    
+    const saveNotes = async () => { await axios.post(`${API_URL}/month/notes`, { month: props.month, notes: notes.value }); };
+    const updateBalance = async () => { saveToHistory(); await axios.post(`${API_URL}/balance`, { month: props.month, amount: Number(balance.value) }); emit('notify', 'Balance Saved'); };
+    const updateSalary = async () => { saveToHistory(); await axios.post(`${API_URL}/salary`, { month: props.month, amount: Number(salary.value) }); emit('notify', 'Salary Logged'); };
+    const createSnapshot = () => JSON.stringify({ balance: balance.value, salary: salary.value, expenses: expenses.value });
+    const saveToHistory = () => { history.value.push(createSnapshot()); future.value = []; if (history.value.length > 20) history.value.shift(); };
+    const performUndo = async () => { if (!history.value.length) return; const previous = JSON.parse(history.value.pop()); future.value.push(createSnapshot()); await applySnapshot(previous); emit('notify', 'Undo successful'); };
+    const performRedo = async () => { if (!future.value.length) return; const next = JSON.parse(future.value.pop()); history.value.push(createSnapshot()); await applySnapshot(next); emit('notify', 'Redo successful'); };
+    const applySnapshot = async (state) => { balance.value = state.balance; salary.value = state.salary; expenses.value = state.expenses; try { await axios.post(`${API_URL}/month/sync`, { month: props.month, balance: state.balance, salary: state.salary, expenses: state.expenses }); } catch (e) { emit('notify', 'Error syncing undo', 'error'); } };
+    const changeMonth = (offset) => { const [y, m] = props.month.split('-').map(Number); const d = new Date(y, m - 1 + offset, 1); emit('update:month', `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`); };
+    const initMonth = async (source) => { if(!confirm("Initialize month?")) return; saveToHistory(); const [y, m] = props.month.split('-').map(Number); const pd = new Date(y, m - 2, 1); await axios.post(`${API_URL}/month/init`, { month: props.month, source, previousMonth: `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,'0')}` }); fetchData(); };
+    const resetMonth = async () => { if(!confirm("Delete ALL data?")) return; saveToHistory(); await axios.delete(`${API_URL}/month`, { params: { month: props.month } }); fetchData(); };
+    const addExpense = async () => { if(!newExpense.value.name || !newExpense.value.amount) return; saveToHistory(); await axios.post(`${API_URL}/expenses`, { ...newExpense.value, month: props.month, amount: Math.abs(parseFloat(newExpense.value.amount)) }); newExpense.value.name = ''; newExpense.value.amount = ''; fetchData(); };
+    const togglePaid = async (item) => { saveToHistory(); item.paid = !item.paid; item.paid_at = item.paid ? new Date().toISOString() : null; await axios.post(`${API_URL}/expenses/${item.id}/toggle`, { paid: item.paid }); };
+    const updateItem = async (item) => { try { await axios.put(`${API_URL}/expenses/${item.id}`, item); } catch (e) { emit('notify', 'Error saving item', 'error'); } };
+    const updateCell = async (item, key, value) => { if (item[key] === value) return; saveToHistory(); item[key] = value; try { await axios.put(`${API_URL}/expenses/${item.id}`, item); } catch (e) { emit('notify', 'Error saving item', 'error'); } };
+    const deleteSelected = async () => { if(!selectedExpenses.value.length) return; if(!confirm(`Delete ${selectedExpenses.value.length} items?`)) return; saveToHistory(); try { await Promise.all(selectedExpenses.value.map(id => axios.delete(`${API_URL}/expenses/${id}`))); selectedExpenses.value = []; fetchData(); emit('notify', 'Items deleted'); } catch (e) { console.error(e); } };
     const sortBy = (key) => { if(sortKey.value === key) sortOrder.value *= -1; else { sortKey.value = key; sortOrder.value = 1; } };
-    
     const getStringHue = (str) => { let hash = 0; if(!str) return 0; for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash); return Math.abs(hash % 360); };
-    const getRowStyle = (ex) => {
-        const style = { transition: 'background-color 0.2s ease' };
-        const hue = getStringHue(ex.who || 'Joint');
-        if (isDark.value) { style.backgroundColor = `hsl(${hue}, 50%, 15%, 0.5)`; } 
-        else { style.backgroundColor = `hsl(${hue}, 70%, 96%, 0.6)`; }
-        if (ex.paid) { style.opacity = 0.6; }
-        return style;
-    };
+    const getRowStyle = (ex) => { const style = { transition: 'background-color 0.2s ease' }; const hue = getStringHue(ex.who || 'Joint'); if (isDark.value) { style.backgroundColor = `hsl(${hue}, 50%, 15%, 0.5)`; } else { style.backgroundColor = `hsl(${hue}, 70%, 96%, 0.6)`; } if (ex.paid) { style.opacity = 0.6; } return style; };
     const getChipColor = (who) => `hsl(${getStringHue(who || 'Joint')}, 70%, 40%)`;
     const formatDateTime = (iso) => iso ? new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '';
-    
+
+    // Scroll Handler for Shrinking Header
+    const handleScroll = () => {
+        isCompact.value = window.scrollY > 50;
+    };
+
     watch(() => props.month, fetchData);
-    onMounted(fetchData);
-    </script>
+    onMounted(() => {
+        fetchData();
+        window.addEventListener('scroll', handleScroll);
+    });
+    onUnmounted(() => {
+        window.removeEventListener('scroll', handleScroll);
+    });
+</script>
     
-    <template>
-        <div>
-            <v-card class="mb-6 rounded-xl mx-auto text-center position-relative" elevation="2" max-width="600">
+<template>
+    <div class="position-relative">
+        <div class="sticky-header pt-2" :class="isDark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4'">
+            <v-card class="mb-2 rounded-xl mx-auto text-center position-relative" elevation="2" max-width="600">
                 <div class="position-absolute left-0 top-0 ma-2 d-flex">
                     <v-tooltip text="Undo" location="top">
-                        <template v-slot:activator="{ props }">
-                            <v-btn v-bind="props" icon="mdi-undo" variant="text" size="small" :disabled="!history.length" @click="performUndo"></v-btn>
-                        </template>
+                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-undo" variant="text" size="small" :disabled="!history.length" @click="performUndo"></v-btn></template>
                     </v-tooltip>
                     <v-tooltip text="Redo" location="top">
-                        <template v-slot:activator="{ props }">
-                            <v-btn v-bind="props" icon="mdi-redo" variant="text" size="small" :disabled="!future.length" @click="performRedo"></v-btn>
-                        </template>
+                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-redo" variant="text" size="small" :disabled="!future.length" @click="performRedo"></v-btn></template>
                     </v-tooltip>
                 </div>
     
@@ -317,18 +193,14 @@
                 </div>
                 
                 <div class="ma-2">
-                    <v-alert v-if="formattedMonth.days >= 33" density="compact" type="warning" variant="tonal" class="mb-1 text-caption font-weight-bold" icon="mdi-clock-alert-outline">
-                        Long Month! {{ formattedMonth.days }} days.
-                    </v-alert>
-                    
+                    <v-alert v-if="formattedMonth.days >= 33" density="compact" type="warning" variant="tonal" class="mb-1 text-caption font-weight-bold" icon="mdi-clock-alert-outline">Long Month! {{ formattedMonth.days }} days.</v-alert>
                     <v-alert v-if="upcomingBirthdays.length" density="compact" type="info" variant="tonal" class="text-caption font-weight-bold" icon="mdi-cake-variant">
-                        Birthdays this period: 
-                        <span v-for="(p, i) in upcomingBirthdays" :key="p.id">
-                            {{ p.name }} ({{ p.displayDate }})<span v-if="i < upcomingBirthdays.length - 1">, </span>
-                        </span>
+                        Birthdays: <span v-for="(p, i) in upcomingBirthdays" :key="p.id">{{ p.name }} ({{ p.displayDate }})<span v-if="i < upcomingBirthdays.length - 1">, </span></span>
                     </v-alert>
                 </div>
             </v-card>
+
+            <v-textarea v-if="!isCompact" v-model="notes" rows="1" auto-grow density="compact" variant="solo-filled" label="Month Notes" hide-details class="mb-4 mx-auto" style="max-width: 600px" @blur="saveNotes"></v-textarea>
     
             <v-alert v-if="!expenses.length" type="info" variant="tonal" class="mb-6 rounded-lg">
                 No transactions. <v-btn color="primary" class="ml-4" @click="initMonth('template')">Use Master List</v-btn>
@@ -336,59 +208,44 @@
             </v-alert>
     
             <div v-else>
-                <v-row class="mb-4">
+                <v-card v-if="isCompact" class="mb-4 rounded-lg d-flex align-center justify-space-around pa-2 bg-primary text-white" elevation="4">
+                    <div class="d-flex flex-column align-center">
+                        <span class="text-caption font-weight-bold opacity-80">Income</span>
+                        <span class="font-weight-black">£{{salary.toFixed(0)}}</span>
+                    </div>
+                    <div class="d-flex flex-column align-center">
+                        <span class="text-caption font-weight-bold opacity-80">Balance</span>
+                        <span class="font-weight-black" :class="balance < 0 ? 'text-red-lighten-3' : ''">£{{balance.toFixed(0)}}</span>
+                    </div>
+                    <div class="d-flex flex-column align-center">
+                        <span class="text-caption font-weight-bold opacity-80">Left</span>
+                        <span class="font-weight-black" :class="projectedBalance < 0 ? 'text-red-lighten-3' : ''">£{{projectedBalance.toFixed(0)}}</span>
+                    </div>
+                    <div class="d-flex flex-column align-center">
+                        <span class="text-caption font-weight-bold opacity-80">Unpaid</span>
+                        <span class="font-weight-black">£{{leftToPay.toFixed(0)}}</span>
+                    </div>
+                </v-card>
+
+                <v-row v-else class="mb-4">
                     <v-col cols="12" sm="3">
                         <v-card class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" elevation="2">
                             <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-1">Income</div>
-                            <v-text-field 
-                                :model-value="salary" 
-                                @update:model-value="v => { salary=v; updateSalary() }" 
-                                prefix="£" 
-                                variant="plain" 
-                                density="compact" 
-                                bg-color="transparent"
-                                class="text-h4 font-weight-bold centered-input minimal-input" 
-                                inputmode="decimal" 
-                                hide-details
-                                single-line
-                            ></v-text-field>
+                            <v-text-field :model-value="salary" @update:model-value="v => { salary=v; updateSalary() }" prefix="£" variant="plain" density="compact" bg-color="transparent" class="text-h4 font-weight-bold centered-input minimal-input" inputmode="decimal" hide-details single-line></v-text-field>
                         </v-card>
                     </v-col>
-    
                     <v-col cols="12" sm="3">
                         <v-card class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" elevation="2">
                             <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-1">Balance</div>
-                            <v-text-field 
-                                :model-value="balance" 
-                                @update:model-value="v => { balance=v; updateBalance() }" 
-                                prefix="£" 
-                                variant="plain" 
-                                density="compact"
-                                bg-color="transparent"
-                                :color="balance < 0 ? 'error' : 'primary'"
-                                class="text-h4 font-weight-black centered-input minimal-input" 
-                                inputmode="decimal" 
-                                hide-details
-                                single-line
-                            ></v-text-field>
+                            <v-text-field :model-value="balance" @update:model-value="v => { balance=v; updateBalance() }" prefix="£" variant="plain" density="compact" bg-color="transparent" :color="balance < 0 ? 'error' : 'primary'" class="text-h4 font-weight-black centered-input minimal-input" inputmode="decimal" hide-details single-line></v-text-field>
                         </v-card>
                     </v-col>
-    
                     <v-col cols="12" sm="3">
-                        <v-card 
-                            class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" 
-                            elevation="2"
-                            :color="projectedBalance < 0 ? 'red-lighten-4' : 'green-lighten-4'"
-                        >
-                            <div :class="projectedBalance < 0 ? 'text-red-darken-4' : 'text-green-darken-4'" class="text-caption text-uppercase font-weight-bold mb-1">
-                                Projected Left
-                            </div>
-                            <div :class="projectedBalance < 0 ? 'text-red-darken-4' : 'text-green-darken-4'" class="text-h4 font-weight-black">
-                                £{{ projectedBalance.toFixed(2) }}
-                            </div>
+                        <v-card class="h-100 rounded-lg pa-4 text-center d-flex flex-column justify-center" elevation="2" :color="projectedBalance < 0 ? 'red-lighten-4' : 'green-lighten-4'">
+                            <div :class="projectedBalance < 0 ? 'text-red-darken-4' : 'text-green-darken-4'" class="text-caption text-uppercase font-weight-bold mb-1">Projected Left</div>
+                            <div :class="projectedBalance < 0 ? 'text-red-darken-4' : 'text-green-darken-4'" class="text-h4 font-weight-black">£{{ projectedBalance.toFixed(2) }}</div>
                         </v-card>
                     </v-col>
-    
                     <v-col cols="12" sm="3">
                         <v-card class="h-100 rounded-lg pa-4" elevation="2">
                             <div class="text-caption text-uppercase font-weight-bold text-medium-emphasis mb-2">Unpaid Total</div>
@@ -402,93 +259,96 @@
                         </v-card>
                     </v-col>
                 </v-row>
-    
-                <v-card class="rounded-lg" elevation="3">
-                    <v-card-text class="pa-4 bg-surface">
-                        <v-row dense align="center">
-                            <v-col cols="3"><v-select v-model="newExpense.who" :items="people" density="compact" variant="outlined" hide-details label="Who" bg-color="surface"></v-select></v-col>
-                            <v-col cols="3"><v-text-field v-model="newExpense.name" density="compact" variant="outlined" hide-details label="Bill Name" bg-color="surface"></v-text-field></v-col>
-                            <v-col cols="2"><v-text-field v-model="newExpense.amount" type="number" prefix="£" density="compact" variant="outlined" hide-details label="Amount" inputmode="decimal" bg-color="surface"></v-text-field></v-col>
-                            <v-col cols="2"><v-select v-model="newExpense.category" :items="categories" density="compact" variant="outlined" hide-details label="Category" bg-color="surface"></v-select></v-col>
-                            <v-col cols="2"><v-btn block color="primary" @click="addExpense" height="40" variant="flat">Add</v-btn></v-col>
-                        </v-row>
-                    </v-card-text>
-                    
-                    <div class="d-flex justify-end px-4 py-2 border-t">
-                        <v-text-field v-model="search" prepend-inner-icon="mdi-magnify" label="Search" single-line hide-details density="compact" variant="plain" style="max-width: 200px"></v-text-field>
-                    </div>
-                    
-                    <v-divider></v-divider>
-                    
-                    <v-table hover density="comfortable">
-                        <thead>
-                            <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
-                                <template #item="{ element: col }">
-                                    <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header text-caption text-uppercase">
-                                        <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}">
-                                            <v-icon size="x-small" class="drag-handle cursor-move mr-1 text-disabled">mdi-drag</v-icon>
-                                            <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
-                                                {{ col.label }} <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
-                                            </span>
-                                        </div>
-                                    </th>
-                                </template>
-                            </draggable>
-                        </thead>
-                        <tbody>
-                            <tr v-for="ex in filteredExpenses" :key="ex.id" :style="getRowStyle(ex)">
-                                <td v-for="col in columns" :key="col.key" :class="'text-'+col.align" class="pa-1">
-                                    <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedExpenses" :value="ex.id" density="compact" hide-details class="ma-0"></v-checkbox-btn>
-                                    
-                                    <div v-else-if="col.key === 'status'" class="d-flex justify-center">
-                                        <v-tooltip v-if="ex.paid && ex.paid_at" location="top" :text="'Paid: ' + formatDateTime(ex.paid_at)">
-                                            <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-check-circle" color="green" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn></template>
-                                        </v-tooltip>
-                                        <v-btn v-else icon="mdi-circle-outline" color="grey" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn>
-                                    </div>
-                                    
-                                    <div v-else-if="col.key === 'who'">
-                                        <v-select :model-value="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="v => updateCell(ex, 'who', v)"></v-select>
-                                    </div>
-                                    
-                                    <div v-else-if="col.key === 'name'">
-                                        <v-text-field :model-value="ex.name" density="compact" variant="plain" hide-details single-line @update:model-value="v => updateCell(ex, 'name', v)"></v-text-field>
-                                    </div>
-                                    
-                                    <div v-else-if="col.key === 'amount'">
-                                        <v-text-field :model-value="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @update:model-value="v => updateCell(ex, 'amount', Number(v))"></v-text-field>
-                                    </div>
-                                    
-                                    <div v-else-if="col.key === 'category'">
-                                        <v-select :model-value="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="v => updateCell(ex, 'category', v)"></v-select>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                </v-card>
-    
-                <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-inverse-surface d-flex align-center justify-center" style="z-index: 100; max-width: 400px; margin: 0 auto 20px auto !important;">
-                    <span class="font-weight-bold mr-4">{{selectedExpenses.length}} Selected</span>
-                    <span class="text-h6 font-weight-black mr-4">£{{selectedTotal.toFixed(2)}}</span>
-                    <v-btn icon="mdi-delete" color="error" variant="text" class="mr-2" @click="deleteSelected"></v-btn>
-                    <v-btn icon="mdi-close" size="small" variant="text" @click="selectedExpenses = []"></v-btn>
-                </v-card>
             </div>
         </div>
-    </template>
+        <div v-if="expenses.length">
+            <v-card class="rounded-lg" elevation="3">
+                <v-card-text class="pa-4 bg-surface">
+                    <v-row dense align="center">
+                        <v-col cols="3"><v-select v-model="newExpense.who" :items="people" density="compact" variant="outlined" hide-details label="Who" bg-color="surface"></v-select></v-col>
+                        <v-col cols="3"><v-text-field v-model="newExpense.name" density="compact" variant="outlined" hide-details label="Bill Name" bg-color="surface"></v-text-field></v-col>
+                        <v-col cols="2"><v-text-field v-model="newExpense.amount" type="number" prefix="£" density="compact" variant="outlined" hide-details label="Amount" inputmode="decimal" bg-color="surface"></v-text-field></v-col>
+                        <v-col cols="2"><v-select v-model="newExpense.category" :items="categories" density="compact" variant="outlined" hide-details label="Category" bg-color="surface"></v-select></v-col>
+                        <v-col cols="2"><v-btn block color="primary" @click="addExpense" height="40" variant="flat">Add</v-btn></v-col>
+                    </v-row>
+                </v-card-text>
+                
+                <div class="d-flex justify-end px-4 py-2 border-t">
+                    <v-text-field v-model="search" prepend-inner-icon="mdi-magnify" label="Search" single-line hide-details density="compact" variant="plain" style="max-width: 200px"></v-text-field>
+                </div>
+                
+                <v-divider></v-divider>
+                
+                <v-table hover density="comfortable">
+                    <thead>
+                        <draggable v-model="columns" tag="tr" item-key="key" handle=".drag-handle">
+                            <template #item="{ element: col }">
+                                <th :class="'text-'+col.align" :style="{width: col.width}" class="resizable-header text-caption text-uppercase">
+                                    <div class="d-flex align-center" :class="{'justify-end': col.align==='right', 'justify-center': col.align==='center'}">
+                                        <v-icon size="x-small" class="drag-handle cursor-move mr-1 text-disabled">mdi-drag</v-icon>
+                                        <span class="cursor-pointer" @click="col.sortable && sortBy(col.key)">
+                                            {{ col.label }} <v-icon v-if="sortKey === col.key" size="x-small">{{ sortOrder === 1 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
+                                        </span>
+                                    </div>
+                                </th>
+                            </template>
+                        </draggable>
+                    </thead>
+                    <tbody>
+                        <tr v-for="ex in filteredExpenses" :key="ex.id" :style="getRowStyle(ex)">
+                            <td v-for="col in columns" :key="col.key" :class="'text-'+col.align" class="pa-1">
+                                <v-checkbox-btn v-if="col.key === 'select'" v-model="selectedExpenses" :value="ex.id" density="compact" hide-details class="ma-0"></v-checkbox-btn>
+                                <div v-else-if="col.key === 'status'" class="d-flex justify-center">
+                                    <v-tooltip v-if="ex.paid && ex.paid_at" location="top" :text="'Paid: ' + formatDateTime(ex.paid_at)">
+                                        <template v-slot:activator="{ props }"><v-btn v-bind="props" icon="mdi-check-circle" color="green" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn></template>
+                                    </v-tooltip>
+                                    <v-btn v-else icon="mdi-circle-outline" color="grey" variant="text" size="small" density="compact" @click="togglePaid(ex)"></v-btn>
+                                </div>
+                                <div v-else-if="col.key === 'who'">
+                                    <v-select :model-value="ex.who" :items="people" density="compact" variant="plain" hide-details class="text-caption font-weight-bold text-uppercase" @update:model-value="v => updateCell(ex, 'who', v)"></v-select>
+                                </div>
+                                <div v-else-if="col.key === 'name'">
+                                    <v-text-field :model-value="ex.name" density="compact" variant="plain" hide-details single-line @update:model-value="v => updateCell(ex, 'name', v)"></v-text-field>
+                                </div>
+                                <div v-else-if="col.key === 'amount'">
+                                    <v-text-field :model-value="ex.amount" prefix="£" density="compact" variant="plain" hide-details single-line type="number" class="font-monospace font-weight-bold text-right" @update:model-value="v => updateCell(ex, 'amount', Number(v))"></v-text-field>
+                                </div>
+                                <div v-else-if="col.key === 'category'">
+                                    <v-select :model-value="ex.category" :items="categories" density="compact" variant="plain" hide-details class="text-caption" @update:model-value="v => updateCell(ex, 'category', v)"></v-select>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </v-table>
+            </v-card>
+
+            <v-card v-if="selectedExpenses.length" class="position-fixed bottom-0 left-0 right-0 ma-6 pa-3 rounded-pill bg-inverse-surface d-flex align-center justify-center" style="z-index: 100; max-width: 400px; margin: 0 auto 20px auto !important;">
+                <span class="font-weight-bold mr-4">{{selectedExpenses.length}} Selected</span>
+                <span class="text-h6 font-weight-black mr-4">£{{selectedTotal.toFixed(2)}}</span>
+                <v-btn icon="mdi-delete" color="error" variant="text" class="mr-2" @click="deleteSelected"></v-btn>
+                <v-btn icon="mdi-close" size="small" variant="text" @click="selectedExpenses = []"></v-btn>
+            </v-card>
+        </div>
+    </div>
+</template>
     
-    <style scoped>
-    .centered-input :deep(input) { text-align: center; }
-    .font-monospace { font-family: 'Roboto Mono', monospace; }
-    .cursor-move { cursor: move; }
-    .resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
-    
-    /* Minimalist Input Styles for Summary/Table */
-    .minimal-input :deep(.v-field__outline) { display: none; }
-    .minimal-input :deep(.v-field:hover .v-field__outline) { display: block; opacity: 0.2; }
-    .minimal-input :deep(.v-field--focused .v-field__outline) { display: block; opacity: 0.5; }
-    
-    :deep(.v-field--variant-plain .v-field__overlay) { display: none; }
-    :deep(.v-field--variant-plain:hover .v-field__overlay) { display: block; opacity: 0.05; }
-    </style>
+<style scoped>
+.sticky-header {
+    position: sticky;
+    top: 64px; 
+    z-index: 10;
+    margin-top: -24px;
+    padding-top: 24px;
+    padding-bottom: 10px;
+    transition: all 0.2s ease-in-out;
+}
+.centered-input :deep(input) { text-align: center; }
+.font-monospace { font-family: 'Roboto Mono', monospace; }
+.cursor-move { cursor: move; }
+.resizable-header { resize: horizontal; overflow: hidden; min-width: 50px; }
+.minimal-input :deep(.v-field__outline) { display: none; }
+.minimal-input :deep(.v-field:hover .v-field__outline) { display: block; opacity: 0.2; }
+.minimal-input :deep(.v-field--focused .v-field__outline) { display: block; opacity: 0.5; }
+:deep(.v-field--variant-plain .v-field__overlay) { display: none; }
+:deep(.v-field--variant-plain:hover .v-field__overlay) { display: block; opacity: 0.05; }
+</style>

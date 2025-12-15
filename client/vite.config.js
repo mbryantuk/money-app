@@ -9,8 +9,14 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      // Ensure the new PNGs are included in the offline cache
-      includeAssets: ['logo.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
+      // Ensure all new image assets are included in the offline cache
+      includeAssets: [
+        'logo.svg', 
+        'pwa-192x192.png', 
+        'pwa-512x512.png', 
+        'pwa-maskable-512x512.png', 
+        'apple-touch-icon.png'
+      ],
       workbox: {
         cleanupOutdatedCaches: true,
         clientsClaim: true,
@@ -43,7 +49,6 @@ export default defineConfig({
         background_color: '#F2F5F8',
         display: 'standalone',
         orientation: 'any',
-        // Updated Icons to use PNGs for better compatibility (Windows/iOS)
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -56,7 +61,8 @@ export default defineConfig({
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            // Use the specific maskable icon here for better Android support
+            src: 'pwa-maskable-512x512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
