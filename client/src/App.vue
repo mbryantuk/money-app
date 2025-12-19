@@ -6,7 +6,7 @@
   
   // COMPONENTS
   import DashboardTab from './components/DashboardTab.vue';
-  import BudgetTab from './components/BudgetTab.vue';
+  import BankingTab from './components/BankingTab.vue';
   import SavingsTab from './components/SavingsTab.vue';
   import MortgageTab from './components/MortgageTab.vue';
   import ChristmasTab from './components/ChristmasTab.vue';
@@ -71,7 +71,8 @@
   // AI Settings State
   const ollamaUrl = ref('');
   const ollamaModel = ref('');
-  const aiPrompts = ref({ budget: '', dashboard: '', savings: '', credit_cards: '', meals: '', birthdays: '', christmas: '', sandbox: '', mortgage: '' });
+  // Renamed 'budget' key to 'banking'
+  const aiPrompts = ref({ banking: '', dashboard: '', savings: '', credit_cards: '', meals: '', birthdays: '', christmas: '', sandbox: '', mortgage: '' });
 
   const snackbar = ref(false);
   const snackbarText = ref('');
@@ -140,7 +141,8 @@
 
   // --- AI LOGIC ---
   const isAiAvailable = computed(() => {
-    return aiEnabled.value && ['dashboard', 'budget', 'savings', 'credit_cards', 'mortgage', 'meals', 'birthdays', 'christmas', 'sandbox'].includes(tab.value);
+    // Check for 'banking' instead of 'budget'
+    return aiEnabled.value && ['dashboard', 'banking', 'savings', 'credit_cards', 'mortgage', 'meals', 'birthdays', 'christmas', 'sandbox'].includes(tab.value);
   });
 
   const generateAiSummary = async (isBackground = false) => {
@@ -156,7 +158,8 @@
     let type = 'general';
     let params = {};
 
-    if (tab.value === 'budget') { type = 'budget'; params = { month: currentMonth.value }; }
+    // Updated check for banking tab, but keeping 'budget' type for backend compatibility
+    if (tab.value === 'banking') { type = 'budget'; params = { month: currentMonth.value }; }
     else if (tab.value === 'dashboard') { type = 'dashboard'; params = { year: parseInt(currentMonth.value.split('-')[0]) }; }
     else if (tab.value === 'savings') { type = 'savings'; }
     else if (tab.value === 'credit_cards') { type = 'credit_cards'; }
@@ -256,8 +259,9 @@
           aiEnabled.value = (val === 'true' || val === true || val === '1' || val === 1);
       }
 
+      // Mapped budget prompt to banking key
       aiPrompts.value = {
-        budget: settings.prompt_budget || '', dashboard: settings.prompt_dashboard || '', savings: settings.prompt_savings || '', credit_cards: settings.prompt_credit_cards || '', meals: settings.prompt_meals || '', birthdays: settings.prompt_birthdays || '', christmas: settings.prompt_christmas || '', sandbox: settings.prompt_sandbox || '', mortgage: settings.prompt_mortgage || ''
+        banking: settings.prompt_budget || '', dashboard: settings.prompt_dashboard || '', savings: settings.prompt_savings || '', credit_cards: settings.prompt_credit_cards || '', meals: settings.prompt_meals || '', birthdays: settings.prompt_birthdays || '', christmas: settings.prompt_christmas || '', sandbox: settings.prompt_sandbox || '', mortgage: settings.prompt_mortgage || ''
       };
 
       if (settings.theme_color) updateThemeColor(settings.theme_color);
@@ -307,7 +311,8 @@
   
         <v-list nav density="compact" class="mt-2" v-model:opened="openList">
           <v-list-item prepend-icon="mdi-view-dashboard-outline" title="Dashboard" value="dashboard" @click="selectTab('dashboard')" :active="tab === 'dashboard'" color="primary" rounded="xl"></v-list-item>
-          <v-list-item prepend-icon="mdi-wallet-outline" title="Budget" value="budget" @click="selectTab('budget')" :active="tab === 'budget'" color="primary" rounded="xl"></v-list-item>
+          <v-list-item prepend-icon="mdi-wallet-outline" title="Banking" value="banking" @click="selectTab('banking')" :active="tab === 'banking'" color="primary" rounded="xl"></v-list-item>
+          
           <v-list-item prepend-icon="mdi-piggy-bank-outline" title="Savings" value="savings" @click="selectTab('savings')" :active="tab === 'savings'" color="primary" rounded="xl"></v-list-item>
           <v-list-item prepend-icon="mdi-credit-card-outline" title="Credit Cards" value="credit_cards" @click="selectTab('credit_cards')" :active="tab === 'credit_cards'" color="primary" rounded="xl"></v-list-item>
           <v-list-item prepend-icon="mdi-home-city-outline" title="Mortgage" value="mortgage" @click="selectTab('mortgage')" :active="tab === 'mortgage'" color="primary" rounded="xl"></v-list-item>
@@ -378,7 +383,8 @@
       <v-main :class="isDark ? 'bg-grey-darken-4' : 'bg-grey-lighten-4'">
         <v-container class="py-6" fluid>
           <DashboardTab v-if="tab === 'dashboard'" />
-          <BudgetTab v-if="tab === 'budget' && currentMonth" v-model:month="currentMonth" :people="availablePeople" :categories="availableCategories" :default-salary="defaultSalary" :pay-day="payDay" :birthdays="birthdays" @notify="showMsg" />
+          <BankingTab v-if="tab === 'banking' && currentMonth" v-model:month="currentMonth" :people="availablePeople" :categories="availableCategories" :default-salary="defaultSalary" :pay-day="payDay" :birthdays="birthdays" @notify="showMsg" />
+          
           <SavingsTab v-if="tab === 'savings'" @notify="showMsg" />
           <CreditCardsTab v-if="tab === 'credit_cards'" @notify="showMsg" />
           <MortgageTab v-if="tab === 'mortgage'" @notify="showMsg" />
