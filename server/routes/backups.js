@@ -1,81 +1,62 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../database');
 const path = require('path');
 const fs = require('fs');
+const archiver = require('archiver'); // You might need to npm install archiver if not present
 
-const BACKUP_DIR = path.join(__dirname, '../backups');
-// Ensure backup directory exists on startup
-if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
+// Middleware: Strict check for System Administrator
+const requireSysadmin = (req, res, next) => {
+    if (req.user && req.user.is_sysadmin) {
+        next();
+    } else {
+        res.status(403).json({ error: "Access Denied: Only System Administrators can perform global backups." });
+    }
+};
 
-// Get list of backups and config
-router.get('/backups', (req, res) => {
-    fs.readdir(BACKUP_DIR, (err, files) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        const fileList = files
-            .filter(f => f.endsWith('.db'))
-            .map(f => {
-                const stats = fs.statSync(path.join(BACKUP_DIR, f));
-                return { name: f, created: stats.mtime, size: stats.size };
-            })
-            .sort((a, b) => b.created - a.created);
+router.use(requireSysadmin);
 
-        db.get("SELECT value FROM settings WHERE key = 'backup_config'", (err, row) => {
-            const config = row ? JSON.parse(row.value) : { frequency: 'never', time: '02:00' };
-            res.json({ files: fileList, config });
-        });
-    });
-});
-
-// Save Backup Schedule
-router.post('/backups/config', (req, res) => {
-    const config = req.body;
-    db.run("INSERT INTO settings (key, value) VALUES ('backup_config', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", 
-        [JSON.stringify(config)], 
-        () => res.json({ success: true })
-    );
-});
-
-// Create Manual Backup
-router.post('/backups/create', (req, res) => {
+// Create a Backup (Zips the SQLite file)
+router.get('/create', (req, res) => {
+    const dbPath = path.resolve('./finance.db');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `backup-${timestamp}.db`;
-    const source = path.join(__dirname, '../finance.db');
-    const dest = path.join(BACKUP_DIR, filename);
-    
-    fs.copyFile(source, dest, (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, filename });
+    const backupName = `backup-${timestamp}.zip`;
+
+    res.attachment(backupName);
+
+    const archive = archiver('zip', {
+        zlib: { level: 9 } // Sets the compression level.
     });
+
+    archive.on('error', function(err) {
+        res.status(500).send({ error: err.message });
+    });
+
+    // Pipe archive data to the response
+    archive.pipe(res);
+
+    // Append the database file
+    archive.file(dbPath, { name: 'finance.db' });
+
+    // Finalize the archive (ie we are done appending files but streams have to finish yet)
+    archive.finalize();
 });
 
-// Delete Backup
-router.delete('/backups/:filename', (req, res) => {
-    const filePath = path.join(BACKUP_DIR, req.params.filename);
-    if (fs.existsSync(filePath)) {
-        fs.unlink(filePath, (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        });
-    } else {
-        res.status(404).json({ error: "File not found" });
-    }
-});
-
-// Restore Backup
-router.post('/backups/:filename/restore', (req, res) => {
-    const source = path.join(BACKUP_DIR, req.params.filename);
-    const dest = path.join(__dirname, '../finance.db');
+// List Backups (If you are storing them locally in a folder)
+// If you don't store them and just stream download above, you might not need this.
+router.get('/list', (req, res) => {
+    // This assumes you might have a 'backups' folder. 
+    // If you implemented the stream download above, this might be redundant unless you save to disk first.
+    const backupDir = path.resolve('./backups');
     
-    if (fs.existsSync(source)) {
-        fs.copyFile(source, dest, (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        });
-    } else {
-        res.status(404).json({ error: "File not found" });
+    if (!fs.existsSync(backupDir)){
+        return res.json([]);
     }
+
+    fs.readdir(backupDir, (err, files) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const zipFiles = files.filter(file => file.endsWith('.zip'));
+        res.json(zipFiles);
+    });
 });
 
 module.exports = router;

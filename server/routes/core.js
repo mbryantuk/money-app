@@ -2,161 +2,60 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database');
 
-// --- DATA ENDPOINTS ---
-router.get('/data', (req, res) => {
-    const month = req.query.month; 
-    const response = {};
-    db.get("SELECT amount as balance, salary, notes FROM monthly_balances WHERE month = ?", [month], (err, row) => {
-        if (!row) { response.balance = 0; response.salary = 0; response.notes = ''; fetchRest(response); } 
-        else { response.balance = row.balance; response.salary = row.salary || 0; response.notes = row.notes || ''; fetchRest(response); }
-    });
-    function fetchRest(response) {
-        db.all("SELECT * FROM expenses WHERE month = ?", [month], (err, rows) => {
-            response.expenses = rows || [];
-            db.all("SELECT * FROM savings", (err, pots) => {
-                response.savings = pots || [];
-                res.json(response);
-            });
+// Helper to wrap db queries in promises
+const query = (sql, params = []) => {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
         });
+    });
+};
+
+// Get Dashboard Data (Aggregated)
+router.get('/data', async (req, res) => {
+    const month = req.query.month; // Format: "YYYY-MM"
+    const householdId = req.householdId;
+
+    if (!month) {
+        return res.status(400).json({ error: "Month parameter is required" });
+    }
+
+    try {
+        // Run queries in parallel for performance
+        const [
+            balanceData,
+            incomeData,
+            expenseData,
+            savingsData
+        ] = await Promise.all([
+            // 1. Monthly Balance
+            query("SELECT * FROM monthly_balances WHERE household_id = ? AND month = ?", [householdId, month]),
+            
+            // 2. Income for this month (Assuming you might want to filter by date if you have dates in income, otherwise get all)
+            // If income is recurring/static:
+            query("SELECT * FROM income WHERE household_id = ?", [householdId]),
+            
+            // 3. Expenses/Withdrawals for this month
+            query("SELECT * FROM withdrawals WHERE household_id = ? AND strftime('%Y-%m', date) = ?", [householdId, month]),
+
+            // 4. Savings totals
+            query("SELECT * FROM savings WHERE household_id = ?", [householdId])
+        ]);
+
+        const response = {
+            balance: balanceData[0] || { amount: 0, salary: 0, notes: '' },
+            income: incomeData,
+            expenses: expenseData,
+            savings: savingsData
+        };
+
+        res.json(response);
+
+    } catch (err) {
+        console.error("Dashboard Data Error:", err);
+        res.status(500).json({ error: err.message });
     }
 });
-
-router.post('/balance', (req, res) => {
-    const { month, amount } = req.body;
-    db.run(`INSERT INTO monthly_balances (month, amount) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET amount=excluded.amount`, [month, amount], () => res.json({ success: true }));
-});
-
-router.post('/salary', (req, res) => {
-    const { month, amount } = req.body;
-    db.run(`INSERT INTO monthly_balances (month, salary) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET salary=excluded.salary`, [month, amount], () => res.json({ success: true }));
-});
-
-router.post('/month/notes', (req, res) => {
-    const { month, notes } = req.body;
-    db.run(`INSERT INTO monthly_balances (month, notes) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET notes=excluded.notes`, [month, notes], () => res.json({ success: true }));
-});
-
-router.post('/month/sync', (req, res) => {
-    const { month, balance, salary, expenses } = req.body;
-    db.serialize(() => {
-        db.run("INSERT INTO monthly_balances (month, amount, salary) VALUES (?, ?, ?) ON CONFLICT(month) DO UPDATE SET amount=excluded.amount, salary=excluded.salary", [month, balance, salary]);
-        db.run("DELETE FROM expenses WHERE month = ?", [month], (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            if (expenses && expenses.length > 0) {
-                const stmt = db.prepare("INSERT INTO expenses (id, name, amount, paid, paid_at, category, who, month, vendor, expected_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                expenses.forEach(e => stmt.run(e.id, e.name, Math.abs(e.amount), e.paid ? 1 : 0, e.paid_at, e.category, e.who, month, e.vendor, e.expected_date));
-                stmt.finalize(() => res.json({ success: true }));
-            } else {
-                res.json({ success: true });
-            }
-        });
-    });
-});
-
-// --- EXPENSES ---
-router.post('/expenses', (req, res) => { 
-    const { name, amount, category, who, month, vendor, expected_date } = req.body; 
-    db.run("INSERT INTO expenses (name, amount, category, who, month, vendor, expected_date, paid) VALUES (?, ?, ?, ?, ?, ?, ?, 0)", 
-    [name, Math.abs(amount), category, who, month, vendor || '', expected_date || null], function() { res.json({ id: this.lastID }); });
-});
-
-router.post('/expenses/:id/toggle', (req, res) => { 
-    const { paid } = req.body;
-    const paidAt = paid ? new Date().toISOString() : null; 
-    db.run("UPDATE expenses SET paid = ?, paid_at = ? WHERE id = ?", [paid ? 1 : 0, paidAt, req.params.id], () => res.json({ success: true }));
-});
-
-router.put('/expenses/:id', (req, res) => { 
-    const { name, amount, category, who, vendor, expected_date } = req.body; 
-    db.run("UPDATE expenses SET name = ?, amount = ?, category = ?, who = ?, vendor = ?, expected_date = ? WHERE id = ?", 
-    [name, Math.abs(amount), category, who, vendor, expected_date, req.params.id], () => res.json({ success: true }));
-});
-
-router.delete('/expenses/:id', (req, res) => db.run("DELETE FROM expenses WHERE id=?", [req.params.id], () => res.json({ success: true })));
-
-// --- MONTH MGMT ---
-router.post('/month/init', (req, res) => {
-    const { month, source, previousMonth } = req.body;
-    db.get("SELECT value FROM settings WHERE key = 'default_salary'", (err, setting) => {
-        const val = setting ? parseFloat(setting.value) : 0;
-        
-        // FIX: Set initial 'amount' (Balance) to equal 'val' (Salary)
-        // Previously: VALUES (?, 0, val)
-        db.run("INSERT INTO monthly_balances (month, amount, salary) VALUES (?, ?, ?) ON CONFLICT(month) DO UPDATE SET amount=excluded.amount, salary=excluded.salary", [month, val, val]);
-    });
-    
-    let query = source === 'template' 
-        ? "SELECT name, ABS(amount) as amount, category, who, vendor, expected_date FROM expense_templates" 
-        : `SELECT name, ABS(amount) as amount, category, who, vendor, expected_date FROM expenses WHERE month = '${previousMonth}'`;
-        
-    db.all(query, (err, rows) => {
-        if (!rows || rows.length === 0) return res.json({ success: true, count: 0 });
-        const stmt = db.prepare("INSERT INTO expenses (name, amount, category, who, month, vendor, expected_date, paid) VALUES (?, ?, ?, ?, ?, ?, ?, 0)");
-        rows.forEach(item => stmt.run(item.name, item.amount, item.category, item.who, month, item.vendor, item.expected_date));
-        stmt.finalize(() => res.json({ success: true, count: rows.length }));
-    });
-});
-
-router.delete('/month', (req, res) => {
-    const { month } = req.query;
-    db.serialize(() => { db.run("DELETE FROM expenses WHERE month = ?", [month]); db.run("DELETE FROM monthly_balances WHERE month = ?", [month]); });
-    res.json({ success: true });
-});
-
-// --- SETTINGS ---
-router.get('/settings', (req, res) => { db.all("SELECT * FROM settings", (err, rows) => { const settings = {}; if (rows) rows.forEach(r => settings[r.key] = r.value); res.json(settings); });});
-router.post('/settings', (req, res) => { const { key, value } = req.body; db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, value], () => res.json({ success: true }));});
-router.post('/settings/rename', (req, res) => {
-    const { type, oldName, newName } = req.body; 
-    db.serialize(() => {
-        db.get("SELECT value FROM settings WHERE key = ?", [type], (err, row) => {
-            if (row) {
-                let list = JSON.parse(row.value);
-                const idx = list.indexOf(oldName);
-                if (idx !== -1) {
-                    list[idx] = newName;
-                    db.run("UPDATE settings SET value = ? WHERE key = ?", [JSON.stringify(list), type]);
-                }
-            }
-        });
-        const col = type === 'people' ? 'who' : 'category';
-        db.run(`UPDATE expenses SET ${col} = ? WHERE ${col} = ?`, [newName, oldName]);
-        db.run(`UPDATE expense_templates SET ${col} = ? WHERE ${col} = ?`, [newName, oldName]);
-    });
-    res.json({ success: true });
-});
-
-// --- TEMPLATES ---
-router.get('/templates', (req, res) => db.all("SELECT * FROM expense_templates", (err, rows) => res.json(rows || [])));
-
-router.post('/templates', (req, res) => { 
-    const { name, amount, category, who, vendor, expected_date } = req.body; 
-    db.run("INSERT INTO expense_templates (name, amount, category, who, vendor, expected_date) VALUES (?, ?, ?, ?, ?, ?)", 
-    [name, Math.abs(amount), category, who, vendor, expected_date], function() { res.json({ id: this.lastID }); });
-});
-
-router.delete('/templates/all', (req, res) => {
-    db.run("DELETE FROM expense_templates", [], (err) => {
-        if(err) return res.status(500).json({error: err.message});
-        res.json({success: true});
-    });
-});
-
-router.post('/templates/import', (req, res) => {
-    const { month } = req.body;
-    const sql = `INSERT INTO expense_templates (name, amount, category, who, vendor, expected_date) SELECT name, ABS(amount), category, who, vendor, expected_date FROM expenses WHERE month = ?`;
-    db.run(sql, [month], function(err) {
-        if(err) return res.status(500).json({error: err.message});
-        res.json({success: true, count: this.changes});
-    });
-});
-
-router.put('/templates/:id', (req, res) => { 
-    const { name, amount, category, who, vendor, expected_date } = req.body; 
-    db.run("UPDATE expense_templates SET name=?, amount=?, category=?, who=?, vendor=?, expected_date=? WHERE id=?", 
-    [name, Math.abs(amount), category, who, vendor, expected_date, req.params.id], () => res.json({ success: true }));
-});
-
-router.delete('/templates/:id', (req, res) => db.run("DELETE FROM expense_templates WHERE id=?", [req.params.id], () => res.json({ success: true })));
 
 module.exports = router;
