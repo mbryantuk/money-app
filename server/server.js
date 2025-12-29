@@ -47,9 +47,10 @@ app.use('/api/family', authenticateToken, requireHousehold, familyRoutes);
 app.use('/api/ai', authenticateToken, requireHousehold, aiRoutes);
 app.use('/api/insurance', authenticateToken, requireHousehold, insuranceRoutes);
 // --- 6. Frontend Handling (SPA) ---
-app.get('*', (req, res) => {
+app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
+
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
