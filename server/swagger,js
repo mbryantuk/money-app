@@ -1,0 +1,40 @@
+// server/swagger.js
+const swaggerJsdoc = require('swagger-jsdoc');
+
+const options = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Household Finance API',
+      version: '1.0.0',
+      description: 'API for managing household finances, family, and insurance.',
+    },
+    servers: [
+      {
+        url: 'http://localhost:3000',
+        description: 'Local Development Server',
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+        householdId: {
+            type: 'apiKey',
+            in: 'header',
+            name: 'X-Household-ID',
+            description: 'The ID of the household you are operating within'
+        }
+      },
+    },
+  },
+  // Paths to files containing OpenAPI definitions
+  apis: ['./routes/*.js'], 
+};
+
+const swaggerSpec = swaggerJsdoc(options);
+
+module.exports = swaggerSpec;
